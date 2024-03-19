@@ -3,8 +3,11 @@
   windows_subsystem = "windows"
 )]
 
-use tauri::Manager;
+use sys_tray::build_tray;
+use tauri::{Manager, SystemTrayEvent};
 use window_shadows::set_shadow;
+
+mod sys_tray;
 
 fn main() {
   tauri::Builder::default()
@@ -12,6 +15,31 @@ fn main() {
       let window = app.get_window("main").unwrap();
       set_shadow(&window, true).expect("Unsupported platform!");
       Ok(())
+    })
+    .system_tray(build_tray())
+    .on_system_tray_event(
+    |app, event| match event {
+      SystemTrayEvent::DoubleClick {
+        position: _,
+        size: _,
+        ..
+      } => {
+        app.get_window("main").unwrap().show().unwrap();
+      },
+      SystemTrayEvent::MenuItemClick { id, .. } => {
+        match id.as_str() {
+          "hide" => {
+            let window = app.get_window("main").unwrap();
+            window.hide().unwrap();
+          }
+          "quit" => {
+            let window = app.get_window("main").unwrap();
+            window.close().unwrap();
+          }
+          _ => {}
+        }
+      }
+      _ => {}
     })
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
