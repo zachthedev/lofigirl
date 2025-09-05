@@ -1,7 +1,12 @@
 name: Release
 
-# Unified release workflow that handles both manual releases and tag-based releases
 on:
+  push:
+    branches: ["main"]
+    paths:
+      - 'src-tauri/tauri.conf.json'
+      - 'src-tauri/Cargo.toml'
+      - 'package.json'
   workflow_dispatch:
     inputs:
       version:
@@ -13,258 +18,272 @@ on:
         required: false
         default: false
         type: boolean
-      build_ref:
-        description: 'Branch/commit to build from (defaults to main)'
+      force_rebuild:
+        description: 'Force rebuild instead of reusing CI artifacts'
         required: false
-        default: 'main'
-        type: string
-  push:
-    tags:
-      - 'v*.*.*'
+        default: false
+        type: boolean
 
 permissions:
   contents: write
+  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  prepare-release:
-    # Only run the preparation step for manual releases, not tag pushes
-    if: github.event_name == 'workflow_dispatch'
+  # Determine release strategy and version
+  prepare:
     runs-on: ubuntu-24.04
     outputs:
-      tag: ${{ steps.create-tag.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
       version_no_v: ${{ steps.version.outputs.version_no_v }}
+      should_release: ${{ steps.check.outputs.should_release }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
+      reuse_artifacts: ${{ steps.artifacts.outputs.reuse }}
+      ci_run_id: ${{ steps.artifacts.outputs.run_id }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.build_ref }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-      - name: Validate version format
-        run: |
-          if [[ ! "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
-            echo "❌ Version must be in format v0.0.0 or v0.0.0-suffix"
-            exit 1
-          fi
+      - name: Setup Node.js Environment
+        uses: ./.github/actions/setup-node
 
-      - name: Check if tag exists
-        run: |
-          if git rev-parse "${{ inputs.version }}" >/dev/null 2>&1; then
-            echo "❌ Tag ${{ inputs.version }} already exists"
-            exit 1
-          fi
-
-      - name: Set version output
-        id: version
-        run: |
-          VERSION="${{ inputs.version }}"
-          VERSION_NO_V="${VERSION#v}"
-          echo "version_no_v=$VERSION_NO_V" >> $GITHUB_OUTPUT
-
-      - name: Update version files
-        run: |
-          VERSION_NO_V="${{ steps.version.outputs.version_no_v }}"
-          
-          # Update tauri.conf.json
-          jq --arg version "$VERSION_NO_V" '.version = $version' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
-          
-          # Update Cargo.toml
-          sed -i "s/^version = \".*\"/version = \"$VERSION_NO_V\"/" src-tauri/Cargo.toml
-          
-          echo "Updated versions to: $VERSION_NO_V"
-
-      - name: Commit version changes
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add src-tauri/tauri.conf.json src-tauri/Cargo.toml
-          if git diff --staged --quiet; then
-            echo "No version changes to commit"
-          else
-            git commit -m "chore: bump version to ${{ inputs.version }}"
-            git push origin HEAD
-          fi
-
-      - name: Create and push tag
-        id: create-tag
-        run: |
-          git tag "${{ inputs.version }}"
-          git push origin "${{ inputs.version }}"
-          echo "tag=${{ inputs.version }}" >> $GITHUB_OUTPUT
-
-  # Try to use existing CI artifacts first, then fall back to full build
-  check-ci-artifacts:
-    runs-on: ubuntu-24.04
-    needs: [prepare-release]
-    if: always() && (needs.prepare-release.result == 'success' || github.event_name == 'push')
-    outputs:
-      artifacts_available: ${{ steps.check.outputs.available }}
-      run_id: ${{ steps.check.outputs.run_id }}
-    steps:
-      - name: Check for recent successful CI artifacts
+      - name: Determine version and release necessity
         id: check
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          REF_TO_CHECK="${{ needs.prepare-release.outputs.tag || github.ref_name }}"
-          echo "Checking for CI artifacts for ref: $REF_TO_CHECK"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            SHOULD_RELEASE="true"
+            echo "Manual release requested: $VERSION"
+          else
+            # Auto-release based on version changes
+            CURRENT_VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+            VERSION="v$CURRENT_VERSION"
+            
+            # Check if version changed in recent commits
+            if git log -1 --pretty=format:"%s" | grep -E "^(feat|fix|perf)(\(.+\))?\!?:" >/dev/null; then
+              SHOULD_RELEASE="true"
+              echo "Version bump detected: $VERSION"
+            else
+              SHOULD_RELEASE="false"
+              echo "No release needed for current changes"
+            fi
+          fi
           
-          # Get the latest successful CI run for this ref
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "should_release=$SHOULD_RELEASE" >> $GITHUB_OUTPUT
+
+      - name: Parse version
+        id: version
+        if: steps.check.outputs.should_release == 'true'
+        run: |
+          VERSION="${{ steps.check.outputs.version }}"
+          VERSION_NO_V="${VERSION#v}"
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version_no_v=$VERSION_NO_V" >> $GITHUB_OUTPUT
+          
+          # Validate version format
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+            echo "❌ Invalid version format: $VERSION"
+            exit 1
+          fi
+
+      - name: Generate changelog from conventional commits
+        id: changelog
+        if: steps.check.outputs.should_release == 'true'
+        run: |
+          # Get the last release tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          
+          if [ -z "$LAST_TAG" ]; then
+            COMMIT_RANGE="HEAD"
+          else
+            COMMIT_RANGE="$LAST_TAG..HEAD"
+          fi
+          
+          echo "Generating changelog for range: $COMMIT_RANGE"
+          
+          # Generate changelog
+          CHANGELOG=$(cat << 'EOF'
+          ## What's Changed
+          
+          EOF)
+          
+          # Features
+          FEATURES=$(git log --oneline --pretty=format:"- %s" $COMMIT_RANGE | grep "^- feat" || true)
+          if [ -n "$FEATURES" ]; then
+            CHANGELOG="$CHANGELOG### ✨ Features\n$FEATURES\n\n"
+          fi
+          
+          # Bug fixes
+          FIXES=$(git log --oneline --pretty=format:"- %s" $COMMIT_RANGE | grep "^- fix" || true)
+          if [ -n "$FIXES" ]; then
+            CHANGELOG="$CHANGELOG### 🐛 Bug Fixes\n$FIXES\n\n"
+          fi
+          
+          # Performance improvements
+          PERF=$(git log --oneline --pretty=format:"- %s" $COMMIT_RANGE | grep "^- perf" || true)
+          if [ -n "$PERF" ]; then
+            CHANGELOG="$CHANGELOG### ⚡ Performance\n$PERF\n\n"
+          fi
+          
+          # Other changes
+          OTHER=$(git log --oneline --pretty=format:"- %s" $COMMIT_RANGE | grep -v "^- \(feat\|fix\|perf\)" || true)
+          if [ -n "$OTHER" ]; then
+            CHANGELOG="$CHANGELOG### 🔧 Other Changes\n$OTHER\n\n"
+          fi
+          
+          # Add download section
+          CHANGELOG="$CHANGELOG$(cat << 'EOF'
+          ### 📦 Downloads
+          
+          Choose the right download for your platform:
+          
+          **Windows:**
+          - \`.msi\` - Windows installer (recommended)
+          - \`.exe\` - Portable executable
+          
+          **macOS:**
+          - \`.dmg\` - macOS disk image (recommended)
+          - \`.app.tar.gz\` - Application bundle
+          
+          **Linux:**
+          - \`.deb\` - Debian/Ubuntu package
+          - \`.rpm\` - RedHat/Fedora package
+          - \`.AppImage\` - Portable application
+          
+          ### 🚨 Installation Notes
+          The builds are **unsigned**, so you might get a security warning:
+          - **macOS**: Right-click → Open, then click "Open" in the dialog
+          - **Windows**: Click "More info" → "Run anyway" in Windows Defender SmartScreen
+          EOF
+          )"
+          
+          # Save changelog to file and output
+          echo -e "$CHANGELOG" > changelog.md
+          {
+            echo 'changelog<<EOF'
+            echo -e "$CHANGELOG"
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+
+      - name: Check for reusable CI artifacts
+        id: artifacts
+        if: steps.check.outputs.should_release == 'true' && inputs.force_rebuild != 'true'
+        run: |
+          CURRENT_SHA=$(git rev-parse HEAD)
+          
+          # Look for recent successful CI run
           RUN_ID=$(gh api repos/${{ github.repository }}/actions/workflows/ci.yml/runs \
-            --jq ".workflow_runs[] | select(.head_sha == \"$(git rev-parse $REF_TO_CHECK)\") | select(.conclusion == \"success\") | .id" \
+            --jq ".workflow_runs[] | select(.head_sha == \"$CURRENT_SHA\") | select(.conclusion == \"success\") | .id" \
             | head -1)
           
           if [ -n "$RUN_ID" ]; then
-            echo "Found successful CI run: $RUN_ID"
-            echo "available=true" >> $GITHUB_OUTPUT
+            echo "Found reusable CI artifacts from run: $RUN_ID"
+            echo "reuse=true" >> $GITHUB_OUTPUT
             echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
           else
-            echo "No recent CI artifacts found, will build from scratch"
-            echo "available=false" >> $GITHUB_OUTPUT
+            echo "No reusable CI artifacts found, will build from scratch"
+            echo "reuse=false" >> $GITHUB_OUTPUT
             echo "run_id=" >> $GITHUB_OUTPUT
           fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  build-and-release:
-    needs: [prepare-release, check-ci-artifacts]
-    # Run if manual release preparation succeeded, OR if this is a tag push
-    if: always() && (needs.prepare-release.result == 'success' || github.event_name == 'push')
-    permissions:
-      contents: write
+  # Build and release
+  release:
+    runs-on: ${{ matrix.platform }}
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: 'macos-latest'
-            args: '--target aarch64-apple-darwin'
             target: 'aarch64-apple-darwin'
+            args: '--target aarch64-apple-darwin'
           - platform: 'macos-latest'
+            target: 'x86_64-apple-darwin'  
             args: '--target x86_64-apple-darwin'
-            target: 'x86_64-apple-darwin'
           - platform: 'ubuntu-24.04'
-            args: ''
             target: 'x86_64-unknown-linux-gnu'
-          - platform: 'windows-latest'
             args: ''
+          - platform: 'windows-latest'
             target: 'x86_64-pc-windows-msvc'
+            args: ''
 
-    runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare-release.outputs.tag || github.ref_name }}
 
-      # Try to download existing artifacts first if available
+      # Try to reuse CI artifacts first
       - name: Download CI artifacts
-        if: needs.check-ci-artifacts.outputs.artifacts_available == 'true'
+        if: needs.prepare.outputs.reuse_artifacts == 'true'
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: build-artifacts-${{ matrix.platform }}-${{ matrix.target }}
-          run-id: ${{ needs.check-ci-artifacts.outputs.run_id }}
+          name: release-${{ matrix.platform }}-${{ matrix.target }}-${{ github.sha }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # If no artifacts or download failed, build from scratch
-      - name: Setup Node.js
-        if: needs.check-ci-artifacts.outputs.artifacts_available != 'true' || failure()
-        uses: actions/setup-node@v4
-        with:
-          node-version: 'lts/*'
-          cache: npm
+      # Build from scratch if no artifacts available
+      - name: Setup Node.js Environment
+        if: needs.prepare.outputs.reuse_artifacts != 'true' || failure()
+        uses: ./.github/actions/setup-node
 
-      - name: Install Node.js dependencies
-        if: needs.check-ci-artifacts.outputs.artifacts_available != 'true' || failure()
-        run: npm ci || npm install
+      - name: Setup System Dependencies
+        if: needs.prepare.outputs.reuse_artifacts != 'true' || failure()
+        uses: ./.github/actions/setup-system
 
-      - name: Setup Rust toolchain
-        if: needs.check-ci-artifacts.outputs.artifacts_available != 'true' || failure()
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust Environment
+        if: needs.prepare.outputs.reuse_artifacts != 'true' || failure()
+        uses: ./.github/actions/setup-rust
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
-      - name: Install system dependencies (Ubuntu only)
-        if: (needs.check-ci-artifacts.outputs.artifacts_available != 'true' || failure()) && matrix.platform == 'ubuntu-24.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libglib2.0-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libssl-dev \
-            libxdo-dev \
-            pkg-config
-
-      - name: Setup Xcode (macOS only)
-        if: (needs.check-ci-artifacts.outputs.artifacts_available != 'true' || failure()) && matrix.platform == 'macos-latest'
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
-
-      - name: Cache Rust dependencies
-        if: needs.check-ci-artifacts.outputs.artifacts_available != 'true' || failure()
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: './src-tauri -> target'
-
-      - name: Get release info
-        id: release_info
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # Manual release
-            echo "tag=${{ needs.prepare-release.outputs.tag }}" >> $GITHUB_OUTPUT
-            echo "prerelease=${{ inputs.prerelease }}" >> $GITHUB_OUTPUT
-            echo "draft=true" >> $GITHUB_OUTPUT
-          else
-            # Tag push
-            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-            echo "prerelease=false" >> $GITHUB_OUTPUT
-            echo "draft=false" >> $GITHUB_OUTPUT
-          fi
 
       - name: Build and create release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ steps.release_info.outputs.tag }}
-          releaseName: 'Lofi Girl ${{ steps.release_info.outputs.tag }}'
-          releaseBody: |
-            ## What's New in ${{ steps.release_info.outputs.tag }}
-            
-            ### Downloads
-            Choose the right download for your platform:
-            
-            **Windows:**
-            - `.msi` - Windows installer (recommended)
-            - `.exe` - Portable executable
-            
-            **macOS:**
-            - `.dmg` - macOS disk image (recommended)
-            - `.app.tar.gz` - Application bundle
-            
-            **Linux:**
-            - `.deb` - Debian/Ubuntu package
-            - `.rpm` - RedHat/Fedora package  
-            - `.AppImage` - Portable application
-            
-            ### Installation Notes
-            The builds are **unsigned**, so you might get a security warning when running them:
-            - **macOS**: Right-click → Open, then click "Open" in the dialog
-            - **Windows**: Click "More info" → "Run anyway" in Windows Defender SmartScreen
-            
-            ---
-            
-            See the assets below to download and install this version.
-          releaseDraft: ${{ steps.release_info.outputs.draft }}
-          prerelease: ${{ steps.release_info.outputs.prerelease }}
+          tagName: ${{ needs.prepare.outputs.version }}
+          releaseName: 'Lofi Girl ${{ needs.prepare.outputs.version }}'
+          releaseBody: ${{ needs.prepare.outputs.changelog }}
+          releaseDraft: ${{ github.event_name == 'workflow_dispatch' }}
+          prerelease: ${{ inputs.prerelease || false }}
           args: ${{ matrix.args }}
+
+  # Create development release for develop branch
+  dev-release:
+    runs-on: ubuntu-24.04
+    if: github.ref_name == 'develop' && github.event_name == 'push'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js Environment
+        uses: ./.github/actions/setup-node
+
+      - name: Create development pre-release
+        run: |
+          VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+          DEV_VERSION="v$VERSION-dev.$(git rev-parse --short HEAD)"
+          
+          echo "Creating development release: $DEV_VERSION"
+          
+          gh release create "$DEV_VERSION" \
+            --title "Development Build $DEV_VERSION" \
+            --notes "🚧 **Development Build** - This is an unstable development version.
+
+          **Changes since last release:**
+          $(git log --oneline --pretty=format:'- %s' $(git describe --tags --abbrev=0 2>/dev/null || echo 'HEAD~10')..HEAD | head -10)
+
+          Use at your own risk. For stable releases, see the main releases." \
+            --prerelease
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

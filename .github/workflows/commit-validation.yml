@@ -2,7 +2,8 @@ name: Commit Validation
 
 on:
   pull_request:
-    branches: ["main"]
+    branches: ["main", "develop"]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
@@ -12,77 +13,112 @@ jobs:
   validate-commits:
     runs-on: ubuntu-24.04
     steps:
-      - name: Check out repository
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 'lts/*'
-          cache: npm
-      
-      - name: Install dependencies
-        run: npm ci || npm install
-      
+
+      - name: Setup Node.js Environment
+        uses: ./.github/actions/setup-node
+
       - name: Validate commit messages
+        id: validate
         run: |
-          # Get commit range for this PR
-          BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          echo "Validating commits in PR #${{ github.event.pull_request.number }}"
           
-          echo "🔍 Validating commits from $BASE_SHA to $HEAD_SHA"
+          # Get commits in this PR
+          COMMITS=$(git log --oneline ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }})
+          INVALID_COMMITS=""
+          VALID_COUNT=0
+          TOTAL_COUNT=0
           
-          # Skip validation if no commits to check
-          if ! git log --oneline "$BASE_SHA..$HEAD_SHA" | head -1; then
-            echo "✅ No commits to validate"
-            exit 0
-          fi
-          
-          FAILED_COMMITS=""
-          
-          # Check each commit with commitlint
-          while IFS='|' read -r commit_hash commit_message; do
-            if [ -n "$commit_hash" ] && [ -n "$commit_message" ]; then
-              echo "Checking: $commit_message"
+          while IFS= read -r commit; do
+            if [ -n "$commit" ]; then
+              TOTAL_COUNT=$((TOTAL_COUNT + 1))
+              COMMIT_MSG=$(echo "$commit" | cut -d' ' -f2-)
+              COMMIT_HASH=$(echo "$commit" | cut -d' ' -f1)
               
-              if ! echo "$commit_message" | npx commitlint --config ./commitlint.config.js --quiet; then
-                echo "❌ Invalid: $commit_message"
-                FAILED_COMMITS="${FAILED_COMMITS}• $commit_message\n"
+              echo "Checking: $COMMIT_MSG"
+              
+              if echo "$COMMIT_MSG" | npx commitlint --from=HEAD~1; then
+                VALID_COUNT=$((VALID_COUNT + 1))
+                echo "✅ Valid: $COMMIT_MSG"
               else
-                echo "✅ Valid: $commit_message"
+                INVALID_COMMITS="$INVALID_COMMITS- \`$COMMIT_HASH\`: $COMMIT_MSG\n"
+                echo "❌ Invalid: $COMMIT_MSG"
               fi
             fi
-          done < <(git log --format="%H|%s" --reverse "$BASE_SHA..$HEAD_SHA")
+          done <<< "$COMMITS"
           
-          # If any commits failed, provide helpful guidance and fail
-          if [ -n "$FAILED_COMMITS" ]; then
-            echo ""
-            echo "❌ COMMIT VALIDATION FAILED"
-            echo ""
-            echo "The following commits don't follow Conventional Commits format:"
-            echo -e "$FAILED_COMMITS"
-            echo ""
-            echo "💡 Fix with these commit types:"
-            echo "  • feat: New feature or functionality"
-            echo "  • fix: Bug fixes"
-            echo "  • docs: Documentation updates"
-            echo "  • chore: Maintenance, dependencies, tooling"
-            echo "  • refactor: Code changes (no functional changes)"
-            echo "  • style: Formatting (no functional changes)"
-            echo "  • test: Add or update tests"
-            echo "  • ci: CI/CD pipeline changes"
-            echo ""
-            echo "🔧 How to fix: Use 'Squash and merge' with proper commit message"
-            exit 1
+          echo "validation_result=$VALID_COUNT/$TOTAL_COUNT commits valid" >> $GITHUB_OUTPUT
+          
+          if [ "$VALID_COUNT" -eq "$TOTAL_COUNT" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "All commits follow conventional commit format! ✅"
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo -e "invalid_commits<<EOF\n$INVALID_COMMITS\nEOF" >> $GITHUB_OUTPUT
           fi
-          
-          echo "✅ All commits follow Conventional Commits format!"
-      
-      - name: Create PR comment for failed validation
-        if: failure()
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comment on PR with validation results
+        if: steps.validate.outputs.status == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const invalidCommits = `${{ steps.validate.outputs.invalid_commits }}`;
+            const body = `## 📝 Commit Message Validation Failed
+            
+            Some commits in this PR don't follow the [Conventional Commits](https://www.conventionalcommits.org/) format:
+            
+            ${invalidCommits}
+            
+            ### ✅ Expected Format:
+            - \`feat: add new feature\`
+            - \`fix: resolve bug in component\`
+            - \`chore: update dependencies\`
+            - \`docs: improve README\`
+            - \`style: fix formatting\`
+            - \`refactor: restructure code\`
+            - \`test: add unit tests\`
+            - \`perf: optimize performance\`
+            
+            ### 💡 Quick Fixes:
+            - Use **"Squash and merge"** when merging to create a single conventional commit
+            - Or rewrite commit messages using: \`git commit --amend -m "feat: your message"\`
+            
+            The PR can still be merged using "Squash and merge" with a proper commit message.`;
+            
+            // Delete previous bot comments
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            for (const comment of comments.data) {
+              if (comment.user.type === 'Bot' && comment.body.includes('Commit Message Validation')) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: comment.id,
+                });
+              }
+            }
+            
+            // Create new comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+
+      - name: Set check status
         run: |
-          gh pr comment ${{ github.event.pull_request.number }} --body "❌ Commit Validation Failed - Some commits don't follow Conventional Commits format. Use 'Squash and merge' when merging this PR with a proper commit message like 'feat: description' or 'fix: description'."
+          if [ "${{ steps.validate.outputs.status }}" = "failure" ]; then
+            echo "❌ Commit validation failed"
+            echo "Use 'Squash and merge' with a conventional commit message when merging."
+            exit 1
+          else
+            echo "✅ All commits are valid!"
+          fi

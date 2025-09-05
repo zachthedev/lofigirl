@@ -55,46 +55,69 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/). 
 
 The commit message will be automatically validated when you commit.
 
-## Automated Releases
+## Branch Strategy & Release Process
 
-This project uses a robust CI/CD pipeline with multiple release strategies:
+This project uses a modern branch-based workflow designed for reliable releases:
 
-### CI Pipeline (Continuous Integration)
-- **Runs on**: Every PR and push to main
-- **Features**: 
-  - Code linting and formatting checks
-  - Conventional commits validation
-  - Fast compilation tests
-  - Rust clippy analysis
+### Branch Structure
+- **`main`** - Production releases only. Protected branch that contains stable, tested code
+- **`develop`** - Integration branch for combining features before release  
+- **`feature/*`** - Individual feature branches that merge into `develop`
+
+### Development Workflow
+
+1. **Create feature branch** from `develop`:
+   ```bash
+   git checkout develop
+   git pull origin develop  
+   git checkout -b feature/your-feature-name
+   ```
+
+2. **Develop and commit** using [conventional commits](https://www.conventionalcommits.org/):
+   ```bash
+   git add .
+   git commit -m "feat: add new functionality"
+   ```
+
+3. **Create PR** to `develop` branch - CI validates all commits and runs full test suite
+
+4. **Merge to develop** - Multiple features can be combined here for testing
+
+5. **Release from develop** - When ready, create PR from `develop` to `main` to trigger release
 
 ### Release Strategies
 
-#### Option 1: Manual Release Creation (Recommended)
-1. Go to the **Actions** tab in GitHub
-2. Select **"Release"** workflow  
-3. Click **"Run workflow"**
-4. Enter version in format `v2.1.0`
-5. Choose whether it's a pre-release
-6. Click **"Run workflow"**
+#### 🚀 Automated Release (Recommended)
+When `develop` is merged to `main`, releases trigger automatically based on conventional commits:
+- `feat:` → minor version bump (2.0.0 → 2.1.0)  
+- `fix:` → patch version bump (2.0.0 → 2.0.1)
+- `feat!:` or `BREAKING CHANGE:` → major version bump (2.0.0 → 3.0.0)
 
-This will automatically:
-- Update version numbers in configuration files
-- Create and push the git tag
-- Build for all platforms simultaneously
-- Create a GitHub release with all artifacts
-
-#### Option 2: Tag-based Release (Automatic)
-Simply push a version tag:
+#### ⚡ Manual Release
+For immediate releases or version overrides:
 ```bash
-git tag v2.1.0
-git push origin v2.1.0
+gh workflow run release.yml -f version=v2.1.0 -f prerelease=false
 ```
 
-This triggers the same unified release workflow automatically.
+#### 🧪 Development Releases  
+Pushes to `develop` create automatic pre-releases for testing:
+- Tagged as `v2.1.0-dev.abc1234`
+- Marked as pre-release
+- Perfect for testing before main release
+
+### CI/CD Pipeline Architecture
+
+The modern pipeline is designed for efficiency and artifact reuse:
+
+**Key Features:**
+- **Path-based filtering** - Only runs relevant jobs when code changes
+- **Artifact reuse** - Release pipeline reuses CI build artifacts when possible
+- **Smart caching** - Rust and Node.js dependencies cached across jobs
+- **Conventional commits** - Automatic changelog generation and semantic versioning
 
 ### Expected Release Artifacts
 
-Each release includes optimized builds for multiple platforms:
+Each release includes optimized builds for all platforms:
 - `lofi-girl_VERSION_amd64.deb` - Debian/Ubuntu package
 - `lofi-girl-VERSION-1.x86_64.rpm` - RedHat/Fedora package  
 - `lofi-girl_VERSION_amd64.AppImage` - Linux portable app
@@ -106,8 +129,37 @@ Each release includes optimized builds for multiple platforms:
 - `lofi-girl_aarch64.app.tar.gz` - macOS Apple Silicon app bundle
 - `lofi-girl_x64.app.tar.gz` - macOS Intel app bundle
 
+## Development Setup
+
+### Prerequisites
+- [Node.js](https://nodejs.org/) (LTS version)
+- [Rust](https://rustup.rs/) (latest stable)
+- Platform-specific dependencies (automatically installed in CI)
+
+### Quick Start
+```bash
+# Clone and setup
+git clone https://github.com/zachthedev/lofigirl.git
+cd lofigirl
+npm install
+
+# Run in development mode  
+cd src-tauri
+cargo tauri dev
+
+# Build for production
+cargo tauri build
+```
+
+### Code Quality
+The project enforces quality standards through:
+- **Conventional Commits** - Validated on all PRs
+- **Rust formatting** - `cargo fmt` required
+- **Linting** - `cargo clippy` with strict warnings
+- **Testing** - Unit tests run on all changes
+
 ## Notes
-Prebuilt binaries are automatically built for Windows, Linux, and macOS using GitHub Actions. You can download them from the [releases page](https://github.com/zachthedev/lofigirl/releases/latest).
+Prebuilt binaries are automatically built for Windows, Linux, and macOS using GitHub Actions. Download the latest stable release from the [releases page](https://github.com/zachthedev/lofigirl/releases/latest), or try development builds from the [pre-releases](https://github.com/zachthedev/lofigirl/releases).
 
 The builds are **unsigned**, so you might get a security warning when running them.
 ## Recommended IDE Setup
