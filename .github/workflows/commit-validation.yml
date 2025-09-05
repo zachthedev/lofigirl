@@ -3,7 +3,6 @@ name: Commit Validation
 on:
   pull_request:
     branches: ["main"]
-    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
@@ -11,8 +10,6 @@ permissions:
 jobs:
   validate-commits:
     runs-on: ubuntu-latest
-    if: github.actor != 'dependabot[bot]' && github.event.pull_request.draft == false
-    
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -22,11 +19,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 'lts/*'
           cache: npm
       
       - name: Install dependencies
-        run: npm ci --include=dev || npm install --include=dev
+        run: npm ci || npm install
       
       - name: Validate commit messages
         run: |
@@ -35,6 +32,12 @@ jobs:
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
           
           echo "🔍 Validating commits from $BASE_SHA to $HEAD_SHA"
+          
+          # Skip validation if no commits to check
+          if ! git log --oneline "$BASE_SHA..$HEAD_SHA" | head -1; then
+            echo "✅ No commits to validate"
+            exit 0
+          fi
           
           FAILED_COMMITS=""
           
@@ -45,7 +48,7 @@ jobs:
               
               if ! echo "$commit_message" | npx commitlint --config ./commitlint.config.js --quiet; then
                 echo "❌ Invalid: $commit_message"
-                FAILED_COMMITS="${FAILED_COMMITS}❌ $commit_message\n"
+                FAILED_COMMITS="${FAILED_COMMITS}• $commit_message\n"
               else
                 echo "✅ Valid: $commit_message"
               fi
@@ -60,20 +63,17 @@ jobs:
             echo "The following commits don't follow Conventional Commits format:"
             echo -e "$FAILED_COMMITS"
             echo ""
-            echo "💡 Quick fix suggestions:"
-            echo "  • feat: Add new feature or functionality"
-            echo "  • fix: Fix a bug or issue"
-            echo "  • docs: Update documentation"
-            echo "  • chore: Maintenance, dependencies, etc."
-            echo "  • refactor: Code restructuring (no functional changes)"
-            echo "  • style: Code formatting (no functional changes)"
+            echo "💡 Fix with these commit types:"
+            echo "  • feat: New feature or functionality"
+            echo "  • fix: Bug fixes"
+            echo "  • docs: Documentation updates"
+            echo "  • chore: Maintenance, dependencies, tooling"
+            echo "  • refactor: Code changes (no functional changes)"
+            echo "  • style: Formatting (no functional changes)"
             echo "  • test: Add or update tests"
-            echo "  • ci: CI/CD changes"
+            echo "  • ci: CI/CD pipeline changes"
             echo ""
-            echo "🔧 How to fix:"
-            echo "  1. Use 'Squash and merge' with a proper commit message, or"
-            echo "  2. Rewrite commit history: git rebase -i HEAD~N"
-            echo ""
+            echo "🔧 How to fix: Use 'Squash and merge' with proper commit message"
             exit 1
           fi
           

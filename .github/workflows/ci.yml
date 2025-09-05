@@ -20,23 +20,21 @@ env:
 
 jobs:
   lint-and-format:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 'lts/*'
           cache: npm
 
       - name: Install Node.js dependencies
-        run: |
-          if [ -f "package.json" ]; then
-            npm ci --include=dev || npm install --include=dev
-          fi
+        run: npm ci || npm install
 
-      - name: Install system dependencies (required for clippy)
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -49,37 +47,40 @@ jobs:
             pkg-config \
             libssl-dev
 
-      - name: Install Rust stable
+      - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2.7
+      - name: Cache Rust dependencies
+        uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
 
       - name: Check Rust formatting
-        run: cd src-tauri && cargo fmt --check
+        run: cargo fmt --check
+        working-directory: src-tauri
 
       - name: Run Clippy
-        run: cd src-tauri && cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: src-tauri
 
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: lint-and-format
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Setup node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 'lts/*'
 
-      - name: Install Rust stable
+      - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install dependencies (ubuntu)
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -97,20 +98,18 @@ jobs:
             libxdo-dev \
             pkg-config
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2.7
+      - name: Cache Rust dependencies
+        uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
 
-      - name: Build the app (dev mode for faster CI)
-        run: |
-          cd src-tauri
-          cargo build --verbose
+      - name: Build application
+        run: cargo build --verbose
+        working-directory: src-tauri
 
       - name: Run tests
-        run: |
-          cd src-tauri
-          cargo test --verbose
+        run: cargo test --verbose
+        working-directory: src-tauri
 
   build-cross-platform:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_artifacts == 'true'
@@ -120,13 +119,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: 'macos-latest' # for Arm based macs (M1 and above).
+          - platform: 'macos-latest'
             args: '--target aarch64-apple-darwin'
             target: 'aarch64-apple-darwin'
-          - platform: 'macos-latest' # for Intel based macs.
+          - platform: 'macos-latest'
             args: '--target x86_64-apple-darwin'
             target: 'x86_64-apple-darwin'
-          - platform: 'ubuntu-22.04'
+          - platform: 'ubuntu-24.04'
             args: ''
             target: 'x86_64-unknown-linux-gnu'
           - platform: 'windows-latest'
@@ -135,21 +134,21 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Setup node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 'lts/*'
 
-      - name: Install Rust stable
+      - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          # Those targets are only used on macos runners so it's in an `if` to slightly speed up the linux/windows builds.
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - name: Install dependencies (ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
+      - name: Install system dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -169,21 +168,20 @@ jobs:
 
       - name: Setup Xcode (macOS only)
         if: matrix.platform == 'macos-latest'
-        uses: maxim-lobanov/setup-xcode@v1.6.0
+        uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2.7
+      - name: Cache Rust dependencies
+        uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
 
-      - name: Build the app
-        uses: tauri-apps/tauri-action@v0.5
+      - name: Build application
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # Build only, no releases
           tagName: ''
           releaseName: ''
           releaseBody: ''
