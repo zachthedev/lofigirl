@@ -1,0 +1,168 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v2.0.1)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  create-tag-and-release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.create-tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate version format
+        run: |
+          if [[ ! "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+            echo "❌ Version must be in format v0.0.0 or v0.0.0-suffix"
+            exit 1
+          fi
+
+      - name: Check if tag exists
+        run: |
+          if git rev-parse "${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "❌ Tag ${{ inputs.version }} already exists"
+            exit 1
+          fi
+
+      - name: Update version in tauri.conf.json
+        run: |
+          VERSION="${{ inputs.version }}"
+          VERSION_NO_V="${VERSION#v}"
+          jq --arg version "$VERSION_NO_V" '.version = $version' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+
+      - name: Update version in Cargo.toml
+        run: |
+          VERSION="${{ inputs.version }}"
+          VERSION_NO_V="${VERSION#v}"
+          sed -i "s/^version = \".*\"/version = \"$VERSION_NO_V\"/" src-tauri/Cargo.toml
+
+      - name: Commit version update
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add src-tauri/tauri.conf.json src-tauri/Cargo.toml
+          git commit -m "chore: bump version to ${{ inputs.version }}" || true
+
+      - name: Create and push tag
+        id: create-tag
+        run: |
+          git tag "${{ inputs.version }}"
+          git push origin "${{ inputs.version }}"
+          echo "tag=${{ inputs.version }}" >> $GITHUB_OUTPUT
+
+  build:
+    needs: create-tag-and-release
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+          - platform: 'ubuntu-22.04'
+            args: ''
+          - platform: 'windows-latest'
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-tag-and-release.outputs.tag }}
+
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libxdo-dev \
+            pkg-config
+
+      - name: Setup Xcode (macOS only)
+        if: matrix.platform == 'macos-latest'
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Build the app
+        uses: tauri-apps/tauri-action@v0.5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ needs.create-tag-and-release.outputs.tag }}
+          releaseName: 'LoFi Girl ${{ needs.create-tag-and-release.outputs.tag }}'
+          releaseBody: |
+            ## What's New in ${{ needs.create-tag-and-release.outputs.tag }}
+            
+            ### Downloads
+            Choose the right download for your platform:
+            
+            **Windows:**
+            - `.msi` - Windows installer (recommended)
+            - `.exe` - Portable executable
+            
+            **macOS:**
+            - `.dmg` - macOS disk image (recommended)
+            - `.app.tar.gz` - Application bundle
+            
+            **Linux:**
+            - `.deb` - Debian/Ubuntu package
+            - `.rpm` - RedHat/Fedora package  
+            - `.AppImage` - Portable application
+            
+            ### Installation Notes
+            The builds are **unsigned**, so you might get a security warning when running them:
+            - **macOS**: Right-click → Open, then click "Open" in the dialog
+            - **Windows**: Click "More info" → "Run anyway" in Windows Defender SmartScreen
+            
+            ---
+            
+            See the assets below to download and install this version.
+          releaseDraft: ${{ !inputs.prerelease }}
+          prerelease: ${{ inputs.prerelease }}
+          args: ${{ matrix.args }}
