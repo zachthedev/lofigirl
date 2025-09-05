@@ -146,7 +146,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ needs.create-tag-and-release.outputs.tag }}
-          releaseName: 'LoFi Girl ${{ needs.create-tag-and-release.outputs.tag }}'
+          releaseName: 'Lofi Girl ${{ needs.create-tag-and-release.outputs.tag }}'
           releaseBody: |
             ## What's New in ${{ needs.create-tag-and-release.outputs.tag }}
             

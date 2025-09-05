@@ -78,9 +78,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('LoFi Girl {0}', github.ref_name) || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Lofi Girl {0}', github.ref_name) || '' }}
           releaseBody: |
-            ## LoFi Girl Release
+            ## Lofi Girl Release
             
             ### Downloads
             Choose the right download for your platform:
