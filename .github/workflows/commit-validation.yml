@@ -5,10 +5,14 @@ on:
     branches: ["main"]
     types: [opened, synchronize, reopened]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   validate-commits:
     runs-on: ubuntu-latest
-    if: github.actor != 'dependabot[bot]'
+    if: github.actor != 'dependabot[bot]' && github.event.pull_request.draft == false
     
     steps:
       - name: Check out repository
@@ -26,7 +30,17 @@ jobs:
         run: |
           npm ci --include=dev || npm install --include=dev
       
-      - name: Validate commit messages
+      - name: Delete previous validation comments
+        run: |
+          # Delete any previous commit validation comments to avoid spam
+          gh pr comment list ${{ github.event.pull_request.number }} --json id,body | \
+            jq -r '.[] | select(.body | contains("🤖 Commit Message Validation")) | .id' | \
+            xargs -I {} gh api "repos/${{ github.repository }}/issues/comments/{}" -X DELETE 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Validate commit messages with intelligent suggestions
+        id: validate_commits
         run: |
           # Get the range of commits for this PR
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
@@ -34,88 +48,154 @@ jobs:
           
           echo "Checking commits from $BASE_SHA to $HEAD_SHA"
           
-          # Track validation results
           VALIDATION_FAILED=false
           SUGGESTIONS=""
           
-          # Check each commit in the PR
-          git log --format="%H|%s" --reverse $BASE_SHA..$HEAD_SHA | while IFS='|' read commit_hash commit_message; do
-            echo "Checking commit: $commit_hash - $commit_message"
+          # Check each commit message
+          while IFS='|' read -r commit_hash commit_message; do
+            if [ -z "$commit_hash" ] || [ -z "$commit_message" ]; then
+              continue
+            fi
+            
+            echo "Checking: $commit_message"
             
             # Test if commit message follows conventional commits
             if ! echo "$commit_message" | npx commitlint --config ./commitlint.config.js --quiet; then
-              echo "❌ Non-conforming commit: $commit_message"
-              echo "VALIDATION_FAILED=true" >> $GITHUB_ENV
+              echo "❌ Non-conforming: $commit_message"
+              VALIDATION_FAILED=true
               
-              # Generate helpful suggestion
-              SUGGESTED_MESSAGE=""
+              # Generate intelligent suggestion based on file analysis and content
+              files_changed=$(git diff-tree --no-commit-id --name-only -r "$commit_hash" 2>/dev/null | head -10)
+              FIXED_MESSAGE=""
               
-              # Smart suggestions based on common patterns
-              if echo "$commit_message" | grep -qiE "^(delete|remove|rm).*\.md$"; then
-                SUGGESTED_MESSAGE="docs: $(echo "$commit_message" | sed 's/^[Dd]elete[[:space:]]*//' | sed 's/^[Rr]emove[[:space:]]*//' | sed 's/^[Rr]m[[:space:]]*//')"
-              elif echo "$commit_message" | grep -qiE "^(delete|remove|rm)"; then
-                SUGGESTED_MESSAGE="chore: $(echo "$commit_message" | sed 's/^[Dd]elete[[:space:]]*//' | sed 's/^[Rr]emove[[:space:]]*//' | sed 's/^[Rr]m[[:space:]]*//')"
-              elif echo "$commit_message" | grep -qiE "^(add|create).*\.md$"; then
-                SUGGESTED_MESSAGE="docs: $(echo "$commit_message" | sed 's/^[Aa]dd[[:space:]]*//' | sed 's/^[Cc]reate[[:space:]]*//')"
-              elif echo "$commit_message" | grep -qiE "^(add|create|implement)"; then
-                SUGGESTED_MESSAGE="feat: $(echo "$commit_message" | sed 's/^[Aa]dd[[:space:]]*//' | sed 's/^[Cc]reate[[:space:]]*//' | sed 's/^[Ii]mplement[[:space:]]*//')"
-              elif echo "$commit_message" | grep -qiE "^(fix|repair|resolve)"; then
-                SUGGESTED_MESSAGE="fix: $(echo "$commit_message" | sed 's/^[Ff]ix[[:space:]]*//' | sed 's/^[Rr]epair[[:space:]]*//' | sed 's/^[Rr]esolve[[:space:]]*//')"
-              elif echo "$commit_message" | grep -qiE "^(update|upgrade|modify|change).*\.md$"; then
-                SUGGESTED_MESSAGE="docs: $(echo "$commit_message" | sed 's/^[Uu]pdate[[:space:]]*//' | sed 's/^[Uu]pgrade[[:space:]]*//' | sed 's/^[Mm]odify[[:space:]]*//' | sed 's/^[Cc]hange[[:space:]]*//')"
-              elif echo "$commit_message" | grep -qiE "^(update|upgrade|modify|change)"; then
-                SUGGESTED_MESSAGE="chore: $(echo "$commit_message" | sed 's/^[Uu]pdate[[:space:]]*//' | sed 's/^[Uu]pgrade[[:space:]]*//' | sed 's/^[Mm]odify[[:space:]]*//' | sed 's/^[Cc]hange[[:space:]]*//')"
-              elif echo "$commit_message" | grep -qiE "^(test|tests)"; then
-                SUGGESTED_MESSAGE="test: $(echo "$commit_message" | sed 's/^[Tt]est[s]*[[:space:]]*//')"
-              elif echo "$commit_message" | grep -qiE "^(style|format)"; then
-                SUGGESTED_MESSAGE="style: $(echo "$commit_message" | sed 's/^[Ss]tyle[[:space:]]*//' | sed 's/^[Ff]ormat[[:space:]]*//')"
+              # Preserve existing valid conventional commit prefixes but fix formatting
+              if echo "$commit_message" | grep -qE "^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)(\(.+\))?[!]?:"; then
+                # Already has valid type, just fix formatting
+                FIXED_MESSAGE=$(echo "$commit_message" | sed -E 's/^([a-z]+)(\([^)]*\))?([!]?): */\1\2\3: /' | sed 's/: \(.\)/: \U\1/')
+                echo "💡 Format fix: $FIXED_MESSAGE"
               else
-                # Default to chore if we can't determine the type
-                SUGGESTED_MESSAGE="chore: $commit_message"
+                # Smart auto-fix based on file patterns and content analysis
+                echo "Files changed: $files_changed"
+                
+                # Analyze files to determine appropriate type
+                if echo "$files_changed" | grep -qE "\.(md|txt|rst|adoc)$"; then
+                  # Documentation files
+                  FIXED_MESSAGE="docs: $(echo "$commit_message" | sed -E 's/^(add|create|update|modify|delete|remove|fix)\s*//i' | sed 's/^\(.\)/\U\1/')"
+                elif echo "$files_changed" | grep -qE "\.(test|spec)\.[jt]sx?$|__tests__/|/tests?/|\.test\.|spec/"; then
+                  # Test files
+                  FIXED_MESSAGE="test: $(echo "$commit_message" | sed -E 's/^(add|create|update|modify|fix)\s*//i' | sed 's/^\(.\)/\U\1/')"
+                elif echo "$files_changed" | grep -qE "package\.json$|yarn\.lock$|package-lock\.json$|Cargo\.toml$|Cargo\.lock$|\.gitignore$|\.npmrc$"; then
+                  # Dependency or config files
+                  FIXED_MESSAGE="chore: $(echo "$commit_message" | sed -E 's/^(add|create|update|modify)\s*//i' | sed 's/^\(.\)/\U\1/')"
+                elif echo "$files_changed" | grep -qE "\.(yml|yaml)$" && echo "$files_changed" | grep -q ".github/workflows/"; then
+                  # CI workflow files
+                  FIXED_MESSAGE="ci: $(echo "$commit_message" | sed -E 's/^(add|create|update|modify|fix)\s*//i' | sed 's/^\(.\)/\U\1/')"
+                else
+                  # Content-based analysis for general code files
+                  if echo "$commit_message" | grep -qiE "^(fix|repair|resolve|correct|bug)"; then
+                    # Bug fixes - keep as fix
+                    FIXED_MESSAGE="fix: $(echo "$commit_message" | sed -E 's/^(fix|repair|resolve|correct|bug)\s*//i' | sed 's/^\(.\)/\U\1/')"
+                  elif echo "$commit_message" | grep -qiE "(feature|functionality|implement.*new|add.*feature|new.*component|new.*module)"; then
+                    # Clear feature additions - keep as feat (don't change to chore)
+                    FIXED_MESSAGE="feat: $(echo "$commit_message" | sed -E 's/^(add|create|implement|new)\s*//i' | sed 's/^\(.\)/\U\1/')"
+                  elif echo "$commit_message" | grep -qiE "^(delete|remove|rm|clean)"; then
+                    # Deletions
+                    FIXED_MESSAGE="chore: $(echo "$commit_message" | sed -E 's/^(delete|remove|rm|clean)\s*/Remove /i' | sed 's/^Remove \(.\)/Remove \U\1/')"
+                  elif echo "$commit_message" | grep -qiE "^(style|format|prettier|eslint)"; then
+                    # Styling changes
+                    FIXED_MESSAGE="style: $(echo "$commit_message" | sed -E 's/^(style|format|prettier|eslint)\s*//i' | sed 's/^\(.\)/\U\1/')"
+                  elif echo "$commit_message" | grep -qiE "^(refactor|restructure|reorganize)"; then
+                    # Refactoring
+                    FIXED_MESSAGE="refactor: $(echo "$commit_message" | sed -E 's/^(refactor|restructure|reorganize)\s*//i' | sed 's/^\(.\)/\U\1/')"
+                  elif echo "$commit_message" | grep -qiE "^(update|modify|change)" && echo "$commit_message" | grep -qiE "(feature|functionality)"; then
+                    # Updates to features should stay as feat
+                    FIXED_MESSAGE="feat: $(echo "$commit_message" | sed -E 's/^(update|modify|change)\s*//i' | sed 's/^\(.\)/\U\1/')"
+                  elif echo "$commit_message" | grep -qiE "^(add|create)" && ! echo "$commit_message" | grep -qiE "(config|dependency|lock)"; then
+                    # Generic additions that aren't config/deps - likely features
+                    FIXED_MESSAGE="feat: $(echo "$commit_message" | sed -E 's/^(add|create)\s*//i' | sed 's/^\(.\)/\U\1/')"
+                  else
+                    # Conservative fallback - analyze length and content
+                    if [ ${#commit_message} -gt 50 ]; then
+                      # Long messages are less likely to be trivial chores
+                      if echo "$commit_message" | grep -qiE "(implement|functionality|component|module|system)"; then
+                        FIXED_MESSAGE="feat: $(echo "$commit_message" | sed 's/^\(.\)/\U\1/')"
+                      else
+                        FIXED_MESSAGE="refactor: $(echo "$commit_message" | sed 's/^\(.\)/\U\1/')"
+                      fi
+                    else
+                      FIXED_MESSAGE="chore: $(echo "$commit_message" | sed 's/^\(.\)/\U\1/')"
+                    fi
+                  fi
+                fi
+                
+                echo "💡 Smart suggestion: $FIXED_MESSAGE"
               fi
               
-              # Ensure first character after type is uppercase
-              SUGGESTED_MESSAGE=$(echo "$SUGGESTED_MESSAGE" | sed 's/\(^[a-z]*: \)\(.\)/\1\U\2/')
+              # Ensure reasonable length (GitHub shows ~72 chars before truncation)
+              if [ ${#FIXED_MESSAGE} -gt 70 ]; then
+                FIXED_MESSAGE="${FIXED_MESSAGE:0:67}..."
+              fi
               
-              echo "💡 Suggested: $SUGGESTED_MESSAGE"
-              echo "- \`$commit_message\` → \`$SUGGESTED_MESSAGE\`" >> /tmp/suggestions.txt
+              SUGGESTIONS="${SUGGESTIONS}- \`${commit_message}\` → \`${FIXED_MESSAGE}\`\n"
             else
-              echo "✅ Commit follows conventional format"
+              echo "✅ Follows conventional format"
             fi
-          done
+          done < <(git log --format="%H|%s" --reverse "$BASE_SHA..$HEAD_SHA")
+          
+          echo "validation_failed=$VALIDATION_FAILED" >> $GITHUB_OUTPUT
+          echo -e "$SUGGESTIONS" > /tmp/suggestions.txt
       
-      - name: Comment on PR with suggestions
-        if: env.VALIDATION_FAILED == 'true'
+      - name: Comment on PR with intelligent suggestions
+        if: steps.validate_commits.outputs.validation_failed == 'true'
         run: |
-          if [ -f /tmp/suggestions.txt ]; then
-            SUGGESTION_COUNT=$(wc -l < /tmp/suggestions.txt)
-            
-            gh pr comment ${{ github.event.pull_request.number }} --body \
-              "## 🤖 Commit Message Validation
-              
-              Found $SUGGESTION_COUNT commit messages that don't follow [Conventional Commits](https://www.conventionalcommits.org/) format:
-              
-              $(cat /tmp/suggestions.txt)
-              
-              **Options to fix this:**
-              1. **Squash and merge** with a proper commit message (easiest)
-              2. **Rewrite commit messages** using \`git rebase -i\` if you prefer clean history
-              
-              **Valid prefixes:**
-              - \`feat:\` - New features
-              - \`fix:\` - Bug fixes  
-              - \`docs:\` - Documentation changes
-              - \`chore:\` - Maintenance tasks
-              - \`style:\` - Code formatting
-              - \`test:\` - Test additions/updates"
-            
-            echo "❌ Commit validation failed. See PR comment for details."
-            exit 1
-          fi
+          cat > /tmp/comment.md << 'EOF'
+          ## 🤖 Commit Message Validation
+          
+          Found commit messages that don't follow [Conventional Commits](https://www.conventionalcommits.org/) format. Here are intelligent suggestions:
+          
+          EOF
+          cat /tmp/suggestions.txt >> /tmp/comment.md
+          cat >> /tmp/comment.md << 'EOF'
+          
+          ### How to Apply These Fixes:
+          
+          **Option 1: Squash and Merge (Recommended)**
+          - Use the "Squash and merge" button when merging
+          - Replace the auto-generated message with one of the suggested formats above
+          
+          **Option 2: Rewrite Commit History**
+          ```bash
+          git rebase -i HEAD~N  # where N is the number of commits to fix
+          # Change 'pick' to 'reword' for commits you want to fix
+          # Update each commit message with the suggested format
+          ```
+          
+          **Valid Prefixes:**
+          - `feat:` - New features or functionality
+          - `fix:` - Bug fixes
+          - `docs:` - Documentation changes  
+          - `style:` - Code formatting (no functional changes)
+          - `refactor:` - Code restructuring (no functional changes)
+          - `test:` - Adding or updating tests
+          - `chore:` - Maintenance tasks, dependencies, etc.
+          - `perf:` - Performance improvements
+          - `ci:` - CI/CD changes
+          
+          ---
+          *This validation runs automatically when PRs are opened or updated.*
+          EOF
+          
+          gh pr comment ${{ github.event.pull_request.number }} --body-file /tmp/comment.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
+      - name: Fail if validation failed
+        if: steps.validate_commits.outputs.validation_failed == 'true'
+        run: |
+          echo "❌ Commit validation failed. See PR comment for intelligent suggestions."
+          exit 1
+      
       - name: Success message
-        if: env.VALIDATION_FAILED != 'true'
+        if: steps.validate_commits.outputs.validation_failed != 'true'
         run: |
           echo "✅ All commits follow conventional commit format!"
