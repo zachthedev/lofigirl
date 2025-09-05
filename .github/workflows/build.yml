@@ -1,11 +1,17 @@
-name: Build and Release
+name: Build and Test
 
 on:
-  push:
-    branches: ["main"]
-    tags: ["v*"]
   pull_request:
     branches: ["main"]
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      upload_artifacts:
+        description: 'Upload build artifacts'
+        required: false
+        default: false
+        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,19 +19,23 @@ env:
 jobs:
   build:
     permissions:
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: 'macos-latest' # for Arm based macs (M1 and above).
             args: '--target aarch64-apple-darwin'
+            target: 'aarch64-apple-darwin'
           - platform: 'macos-latest' # for Intel based macs.
             args: '--target x86_64-apple-darwin'
+            target: 'x86_64-apple-darwin'
           - platform: 'ubuntu-22.04'
             args: ''
+            target: 'x86_64-unknown-linux-gnu'
           - platform: 'windows-latest'
             args: ''
+            target: 'x86_64-pc-windows-msvc'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -77,31 +87,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Lofi Girl {0}', github.ref_name) || '' }}
-          releaseBody: |
-            ## Lofi Girl Release
-            
-            ### Downloads
-            Choose the right download for your platform:
-            
-            **Windows:**
-            - `.msi` - Windows installer (recommended)
-            - `.exe` - Portable executable
-            
-            **macOS:**
-            - `.dmg` - macOS disk image (recommended)
-            - `.app.tar.gz` - Application bundle
-            
-            **Linux:**
-            - `.deb` - Debian/Ubuntu package
-            - `.rpm` - RedHat/Fedora package  
-            - `.AppImage` - Portable application
-            
-            ### Installation Notes
-            The builds are **unsigned**, so you might get a security warning when running them:
-            - **macOS**: Right-click → Open, then click "Open" in the dialog
-            - **Windows**: Click "More info" → "Run anyway" in Windows Defender SmartScreen
-          releaseDraft: ${{ startsWith(github.ref, 'refs/tags/') }}
+          # Build only, no releases
+          tagName: ''
+          releaseName: ''
+          releaseBody: ''
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Upload build artifacts
+        if: github.event.inputs.upload_artifacts == 'true' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts-${{ matrix.platform }}-${{ matrix.target }}
+          path: |
+            src-tauri/target/release/bundle/**/*
+            src-tauri/target/release/*lofi*
+          if-no-files-found: warn
+          retention-days: 30

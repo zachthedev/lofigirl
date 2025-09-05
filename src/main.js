@@ -1,9 +1,10 @@
-const { appWindow } = window.__TAURI__.window;
-const { event } = window.__TAURI__.event;
-const { open } = window.__TAURI__.shell;
+// Tauri API will be initialized in initializeApp function
+let appWindow, event, open;
   
 function navigateTo(link) {
-  open(link);
+  if (open) {
+    open(link);
+  }
 }
 
 // Audio visualizer variables
@@ -125,60 +126,115 @@ function drawAnimatedVisualizer() {
 
 // Ensure Tauri API is loaded before setting up event listeners
 async function initializeApp() {
+  console.log('Initializing app...');
+  
   // Wait for Tauri to be ready
   if (!window.__TAURI__) {
     console.error('Tauri API not available');
     return;
   }
 
-  // Set up event listeners
-  document.getElementById("goToGitHub").addEventListener("click", () => {
-    open("https://github.com/zachthedev/lofigirl");
-  });
-  
-  document.getElementById("titlebar-minimize").addEventListener("click", () => {
-    console.log('Minimize clicked');
-    appWindow.minimize();
-  });
-  
-  document.getElementById("titlebar-maximize").addEventListener("click", () => {
-    console.log('Maximize clicked');
-    appWindow.toggleMaximize();
-  });
-  
-  document.getElementById("titlebar-close").addEventListener("click", () => {
-    console.log('Close clicked');
-    appWindow.close();
-  });
-  
-  // Audio toggle functionality
-  document.getElementById("audio-toggle").addEventListener("click", () => {
-    console.log('Audio toggle clicked');
-    toggleAudioMode();
-  });
-  
-  // Audio controls
-  document.getElementById("play-pause").addEventListener("click", () => {
-    const audioElement = document.getElementById('audio-player');
-    const buttonIcon = document.querySelector("#play-pause img");
-    
-    if (audioElement.paused) {
-      audioElement.play();
-      buttonIcon.src = 'https://api.iconify.design/ph:pause-bold.svg';
-      buttonIcon.alt = 'pause';
+  console.log('Tauri API available, initializing...');
+
+  try {
+    // Initialize Tauri API references
+    ({ appWindow } = window.__TAURI__.window);
+    ({ event } = window.__TAURI__.event);
+    ({ open } = window.__TAURI__.shell);
+
+    console.log('Tauri API references initialized');
+
+    // Set up event listeners
+    const goToGitHub = document.getElementById("goToGitHub");
+    if (goToGitHub) {
+      goToGitHub.addEventListener("click", () => {
+        console.log('GitHub link clicked');
+        open("https://github.com/zachthedev/lofigirl");
+      });
     } else {
-      audioElement.pause();
-      buttonIcon.src = 'https://api.iconify.design/ph:play-bold.svg';
-      buttonIcon.alt = 'play';
+      console.error('goToGitHub element not found');
     }
-  });
-  
-  document.getElementById("volume-slider").addEventListener("input", (e) => {
-    const audioElement = document.getElementById('audio-player');
-    audioElement.volume = e.target.value / 100;
-  });
+    
+    const minimizeBtn = document.getElementById("titlebar-minimize");
+    if (minimizeBtn) {
+      minimizeBtn.addEventListener("click", () => {
+        console.log('Minimize clicked');
+        appWindow.minimize();
+      });
+    } else {
+      console.error('titlebar-minimize element not found');
+    }
+    
+    const maximizeBtn = document.getElementById("titlebar-maximize");
+    if (maximizeBtn) {
+      maximizeBtn.addEventListener("click", () => {
+        console.log('Maximize clicked');
+        appWindow.toggleMaximize();
+      });
+    } else {
+      console.error('titlebar-maximize element not found');
+    }
+    
+    const closeBtn = document.getElementById("titlebar-close");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", () => {
+        console.log('Close clicked');
+        appWindow.close();
+      });
+    } else {
+      console.error('titlebar-close element not found');
+    }
+    
+    const audioToggle = document.getElementById("audio-toggle");
+    if (audioToggle) {
+      audioToggle.addEventListener("click", () => {
+        console.log('Audio toggle clicked');
+        toggleAudioMode();
+      });
+    } else {
+      console.error('audio-toggle element not found');
+    }
+    
+    console.log('Event listeners setup completed');
+    
+    // Audio controls
+    const playPauseBtn = document.getElementById("play-pause");
+    if (playPauseBtn) {
+      playPauseBtn.addEventListener("click", () => {
+        const audioElement = document.getElementById('audio-player');
+        const buttonIcon = document.querySelector("#play-pause img");
+        
+        if (audioElement && buttonIcon) {
+          if (audioElement.paused) {
+            audioElement.play();
+            buttonIcon.src = 'https://api.iconify.design/ph:pause-bold.svg';
+            buttonIcon.alt = 'pause';
+          } else {
+            audioElement.pause();
+            buttonIcon.src = 'https://api.iconify.design/ph:play-bold.svg';
+            buttonIcon.alt = 'play';
+          }
+        }
+      });
+    }
+    
+    const volumeSlider = document.getElementById("volume-slider");
+    if (volumeSlider) {
+      volumeSlider.addEventListener("input", (e) => {
+        const audioElement = document.getElementById('audio-player');
+        if (audioElement) {
+          audioElement.volume = e.target.value / 100;
+        }
+      });
+    }
+
+    console.log('All event listeners initialized successfully');
+  } catch (error) {
+    console.error('Error during app initialization:', error);
+  }
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+  console.log('DOM Content Loaded, starting initialization...');
   initializeApp();
 });
