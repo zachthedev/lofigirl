@@ -7,7 +7,7 @@
     "withGlobalTauri": true
   },
   "package": {
-    "productName": "lofi-in-your-desktop",
+    "productName": "LoFi Girl",
     "version": "1.0.1"
   },
   "tauri": {
@@ -16,17 +16,6 @@
       "shell": {
         "all": false,
         "open": true
-      },
-      "window": {
-        "all": false,
-        "close": true,
-        "hide": true,
-        "show": true,
-        "maximize": true,
-        "minimize": true,
-        "unmaximize": true,
-        "unminimize": true,
-        "startDragging": true
       }
     },
     "bundle": {
@@ -50,13 +39,13 @@
         "decorations": false,
         "resizable": true,
         "transparent": true,
-        "title": "LoFi in your desktop",
+        "title": "LoFi Girl",
         "width": 720,
         "height": 405
       }
-    ] ,
+    ],
     "systemTray": {
-      "iconPath": "icons/icon.ico",
+      "iconPath": "icons/icon.png",
       "iconAsTemplate": true
     }
   }
