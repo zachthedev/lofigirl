@@ -1,0 +1,135 @@
+name: Test Release Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_version:
+        description: 'Test version (e.g., v2.0.0-test)'
+        required: true
+        default: 'v2.0.0-test'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  test-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+          - platform: 'ubuntu-22.04'
+            args: ''
+          - platform: 'windows-latest'
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libxdo-dev \
+            pkg-config
+
+      - name: Setup Xcode (macOS only)
+        if: matrix.platform == 'macos-latest'
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: List expected artifacts before build
+        run: |
+          echo "## Expected artifacts for ${{ matrix.platform }}"
+          case "${{ matrix.platform }}" in
+            "windows-latest")
+              echo "- lofi-girl.exe"
+              echo "- lofi-girl_*_x64-setup.msi"
+              echo "- lofi-girl_*_x64_en-US.msi"
+              ;;
+            "ubuntu-22.04")
+              echo "- lofi-girl_*_amd64.deb"
+              echo "- lofi-girl-*-1.x86_64.rpm"  
+              echo "- lofi-girl_*_amd64.AppImage"
+              ;;
+            "macos-latest")
+              if [[ "${{ matrix.args }}" == *"aarch64"* ]]; then
+                echo "- lofi-girl_*_aarch64.dmg"
+                echo "- lofi-girl_aarch64.app.tar.gz"
+              else
+                echo "- lofi-girl_*_x64.dmg"
+                echo "- lofi-girl_x64.app.tar.gz"
+              fi
+              ;;
+          esac
+
+      - name: Build the app (test mode - no release)
+        uses: tauri-apps/tauri-action@v0.5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Don't create releases in test mode
+          tagName: ''
+          releaseName: ''
+          releaseBody: ''
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      - name: List generated artifacts
+        run: |
+          echo "## Generated artifacts:"
+          find src-tauri/target/release/bundle -type f \( \
+            -name "*.exe" -o \
+            -name "*.msi" -o \
+            -name "*.deb" -o \
+            -name "*.rpm" -o \
+            -name "*.AppImage" -o \
+            -name "*.dmg" -o \
+            -name "*.app.tar.gz" \
+          \) 2>/dev/null | sort || echo "No bundle directory found yet"
+          
+          # Also check for any lofi-girl related files
+          find src-tauri/target/release -name "*lofi*" -type f 2>/dev/null | head -10 || true
+
+      - name: Upload artifacts for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts-${{ matrix.platform }}-${{ matrix.args }}
+          path: |
+            src-tauri/target/release/bundle/**/*
+            src-tauri/target/release/*lofi*
+          if-no-files-found: warn

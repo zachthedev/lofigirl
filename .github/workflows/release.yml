@@ -44,20 +44,31 @@ jobs:
         run: |
           VERSION="${{ inputs.version }}"
           VERSION_NO_V="${VERSION#v}"
+          # Use jq to safely update the version field
           jq --arg version "$VERSION_NO_V" '.version = $version' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+          echo "Updated tauri.conf.json version to: $VERSION_NO_V"
+          grep '"version"' src-tauri/tauri.conf.json
 
       - name: Update version in Cargo.toml
         run: |
           VERSION="${{ inputs.version }}"
           VERSION_NO_V="${VERSION#v}"
           sed -i "s/^version = \".*\"/version = \"$VERSION_NO_V\"/" src-tauri/Cargo.toml
+          echo "Updated Cargo.toml version to: $VERSION_NO_V"
+          grep '^version =' src-tauri/Cargo.toml
 
       - name: Commit version update
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add src-tauri/tauri.conf.json src-tauri/Cargo.toml
-          git commit -m "chore: bump version to ${{ inputs.version }}" || true
+          if git diff --staged --quiet; then
+            echo "No version changes to commit"
+          else
+            git commit -m "chore: bump version to ${{ inputs.version }}"
+            git push origin HEAD
+            echo "Committed and pushed version changes"
+          fi
 
       - name: Create and push tag
         id: create-tag
