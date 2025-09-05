@@ -7,7 +7,7 @@
     "withGlobalTauri": true
   },
   "package": {
-    "productName": "LoFi Girl",
+    "productName": "lofi-girl",
     "version": "1.0.1"
   },
   "tauri": {
@@ -21,7 +21,7 @@
     "bundle": {
       "active": true,
       "targets": "all",
-      "identifier": "ai.owln.lofi",
+      "identifier": "tools.zach.lofigirl",
       "icon": [
         "icons/32x32.png",
         "icons/128x128.png",
@@ -39,7 +39,7 @@
         "decorations": false,
         "resizable": true,
         "transparent": true,
-        "title": "LoFi Girl",
+        "title": "Lofi Girl",
         "width": 720,
         "height": 405
       }
