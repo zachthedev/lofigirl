@@ -1,9 +1,10 @@
-const { appWindow } = window.__TAURI__.window;
-const { event } = window.__TAURI__.event;
-const { open } = window.__TAURI__.shell;
+// Tauri API will be initialized in initializeApp function
+let appWindow, event, open;
   
 function navigateTo(link) {
-  open(link);
+  if (open) {
+    open(link);
+  }
 }
 
 // Audio visualizer variables
@@ -130,6 +131,11 @@ async function initializeApp() {
     console.error('Tauri API not available');
     return;
   }
+
+  // Initialize Tauri API references
+  ({ appWindow } = window.__TAURI__.window);
+  ({ event } = window.__TAURI__.event);
+  ({ open } = window.__TAURI__.shell);
 
   // Set up event listeners
   document.getElementById("goToGitHub").addEventListener("click", () => {

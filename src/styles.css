@@ -44,12 +44,19 @@ a {
   left: var(--spacing);
 }
 
+.titlebar-title {
+  /* Allow drag through the title area */
+  pointer-events: none;
+}
+
 .titlebar-title a {
   display: flex;
   margin-left: 7px;
   gap: 6px;
   font-weight: medium;
   align-items: center;
+  /* Make link clickable while allowing drag on parent */
+  pointer-events: auto;
 }
 .titlebar-button {
   display: inline-flex;
