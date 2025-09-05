@@ -1,0 +1,289 @@
+name: CD
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - 'src-tauri/tauri.conf.json'
+      - 'src-tauri/Cargo.toml'
+      - 'package.json'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v2.0.1)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        default: false
+        type: boolean
+      force_rebuild:
+        description: 'Force rebuild instead of reusing CI artifacts'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Determine release strategy and version
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version_no_v: ${{ steps.version.outputs.version_no_v }}
+      should_release: ${{ steps.check.outputs.should_release }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
+      reuse_artifacts: ${{ steps.artifacts.outputs.reuse }}
+      ci_run_id: ${{ steps.artifacts.outputs.run_id }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js Environment
+        uses: ./.github/actions/setup-node
+
+      - name: Determine version and release necessity
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            SHOULD_RELEASE="true"
+            echo "Manual release requested: $VERSION"
+          else
+            # Auto-release based on version changes
+            CURRENT_VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+            VERSION="v$CURRENT_VERSION"
+            
+            # Check if version changed in recent commits
+            if git log -1 --pretty=format:"%s" | grep -E "^(feat|fix|perf)(\(.+\))?\!?:" >/dev/null; then
+              SHOULD_RELEASE="true"
+              echo "Version bump detected: $VERSION"
+            else
+              SHOULD_RELEASE="false"
+              echo "No release needed for current changes"
+            fi
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "should_release=$SHOULD_RELEASE" >> $GITHUB_OUTPUT
+
+      - name: Parse version
+        id: version
+        if: steps.check.outputs.should_release == 'true'
+        run: |
+          VERSION="${{ steps.check.outputs.version }}"
+          VERSION_NO_V="${VERSION#v}"
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version_no_v=$VERSION_NO_V" >> $GITHUB_OUTPUT
+          
+          # Validate version format
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+            echo "❌ Invalid version format: $VERSION"
+            exit 1
+          fi
+
+      - name: Generate changelog from conventional commits
+        id: changelog
+        if: steps.check.outputs.should_release == 'true'
+        run: |
+          # Get the last release tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          
+          if [ -z "$LAST_TAG" ]; then
+            COMMIT_RANGE="HEAD"
+          else
+            COMMIT_RANGE="$LAST_TAG..HEAD"
+          fi
+          
+          echo "Generating changelog for range: $COMMIT_RANGE"
+          
+          # Generate changelog
+          CHANGELOG=$(cat << 'EOF'
+          ## What's Changed
+          
+          EOF)
+          
+          # Features
+          FEATURES=$(git log --oneline --pretty=format:"- %s" $COMMIT_RANGE | grep "^- feat" || true)
+          if [ -n "$FEATURES" ]; then
+            CHANGELOG="$CHANGELOG### ✨ Features\n$FEATURES\n\n"
+          fi
+          
+          # Bug fixes
+          FIXES=$(git log --oneline --pretty=format:"- %s" $COMMIT_RANGE | grep "^- fix" || true)
+          if [ -n "$FIXES" ]; then
+            CHANGELOG="$CHANGELOG### 🐛 Bug Fixes\n$FIXES\n\n"
+          fi
+          
+          # Performance improvements
+          PERF=$(git log --oneline --pretty=format:"- %s" $COMMIT_RANGE | grep "^- perf" || true)
+          if [ -n "$PERF" ]; then
+            CHANGELOG="$CHANGELOG### ⚡ Performance\n$PERF\n\n"
+          fi
+          
+          # Other changes
+          OTHER=$(git log --oneline --pretty=format:"- %s" $COMMIT_RANGE | grep -v "^- \(feat\|fix\|perf\)" || true)
+          if [ -n "$OTHER" ]; then
+            CHANGELOG="$CHANGELOG### 🔧 Other Changes\n$OTHER\n\n"
+          fi
+          
+          # Add download section
+          CHANGELOG="$CHANGELOG$(cat << 'EOF'
+          ### 📦 Downloads
+          
+          Choose the right download for your platform:
+          
+          **Windows:**
+          - \`.msi\` - Windows installer (recommended)
+          - \`.exe\` - Portable executable
+          
+          **macOS:**
+          - \`.dmg\` - macOS disk image (recommended)
+          - \`.app.tar.gz\` - Application bundle
+          
+          **Linux:**
+          - \`.deb\` - Debian/Ubuntu package
+          - \`.rpm\` - RedHat/Fedora package
+          - \`.AppImage\` - Portable application
+          
+          ### 🚨 Installation Notes
+          The builds are **unsigned**, so you might get a security warning:
+          - **macOS**: Right-click → Open, then click "Open" in the dialog
+          - **Windows**: Click "More info" → "Run anyway" in Windows Defender SmartScreen
+          EOF
+          )"
+          
+          # Save changelog to file and output
+          echo -e "$CHANGELOG" > changelog.md
+          {
+            echo 'changelog<<EOF'
+            echo -e "$CHANGELOG"
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+
+      - name: Check for reusable CI artifacts
+        id: artifacts
+        if: steps.check.outputs.should_release == 'true' && inputs.force_rebuild != 'true'
+        run: |
+          CURRENT_SHA=$(git rev-parse HEAD)
+          
+          # Look for recent successful CI run
+          RUN_ID=$(gh api repos/${{ github.repository }}/actions/workflows/ci.yml/runs \
+            --jq ".workflow_runs[] | select(.head_sha == \"$CURRENT_SHA\") | select(.conclusion == \"success\") | .id" \
+            | head -1)
+          
+          if [ -n "$RUN_ID" ]; then
+            echo "Found reusable CI artifacts from run: $RUN_ID"
+            echo "reuse=true" >> $GITHUB_OUTPUT
+            echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+          else
+            echo "No reusable CI artifacts found, will build from scratch"
+            echo "reuse=false" >> $GITHUB_OUTPUT
+            echo "run_id=" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Build and release
+  release:
+    runs-on: ${{ matrix.platform }}
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            target: 'aarch64-apple-darwin'
+            args: '--target aarch64-apple-darwin'
+          - platform: 'macos-latest'
+            target: 'x86_64-apple-darwin'  
+            args: '--target x86_64-apple-darwin'
+          - platform: 'ubuntu-24.04'
+            target: 'x86_64-unknown-linux-gnu'
+            args: ''
+          - platform: 'windows-latest'
+            target: 'x86_64-pc-windows-msvc'
+            args: ''
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Try to reuse CI artifacts first
+      - name: Download CI artifacts
+        if: needs.prepare.outputs.reuse_artifacts == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}-${{ matrix.target }}-${{ github.sha }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build from scratch if no artifacts available
+      - name: Setup Node.js Environment
+        if: needs.prepare.outputs.reuse_artifacts != 'true' || failure()
+        uses: ./.github/actions/setup-node
+
+      - name: Setup System Dependencies
+        if: needs.prepare.outputs.reuse_artifacts != 'true' || failure()
+        uses: ./.github/actions/setup-system
+
+      - name: Setup Rust Environment
+        if: needs.prepare.outputs.reuse_artifacts != 'true' || failure()
+        uses: ./.github/actions/setup-rust
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Build and create release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ needs.prepare.outputs.version }}
+          releaseName: 'Lofi Girl ${{ needs.prepare.outputs.version }}'
+          releaseBody: ${{ needs.prepare.outputs.changelog }}
+          releaseDraft: ${{ github.event_name == 'workflow_dispatch' }}
+          prerelease: ${{ inputs.prerelease || false }}
+          args: ${{ matrix.args }}
+
+  # Create development release for develop branch
+  dev-release:
+    runs-on: ubuntu-24.04
+    if: github.ref_name == 'develop' && github.event_name == 'push'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js Environment
+        uses: ./.github/actions/setup-node
+
+      - name: Create development pre-release
+        run: |
+          VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+          DEV_VERSION="v$VERSION-dev.$(git rev-parse --short HEAD)"
+          
+          echo "Creating development release: $DEV_VERSION"
+          
+          gh release create "$DEV_VERSION" \
+            --title "Development Build $DEV_VERSION" \
+            --notes "🚧 **Development Build** - This is an unstable development version.
+
+          **Changes since last release:**
+          $(git log --oneline --pretty=format:'- %s' $(git describe --tags --abbrev=0 2>/dev/null || echo 'HEAD~10')..HEAD | head -10)
+
+          Use at your own risk. For stable releases, see the main releases." \
+            --prerelease
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,199 @@
+name: CI
+
+on:
+  pull_request:
+    branches: ["main", "develop"]
+  push:
+    branches: ["main", "develop"]
+    tags-ignore: ["**"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Path-based change detection for efficient CI
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Check for changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            workflows:
+              - '.github/workflows/**'
+              - '.github/actions/**'
+            rust:
+              - 'src-tauri/**'
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+            frontend:
+              - 'src/**'
+              - 'package.json'
+              - 'package-lock.json'
+
+  # Lint and format check
+  lint:
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflows == 'true' }}
+    outputs:
+      rust-cache-key: ${{ steps.rust-cache.outputs.cache-primary-key }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        if: needs.changes.outputs.frontend == 'true'
+        uses: ./.github/actions/setup-node
+
+      - name: Setup System Dependencies
+        uses: ./.github/actions/setup-system
+
+      - name: Setup Rust Environment
+        id: rust-cache
+        uses: ./.github/actions/setup-rust
+        with:
+          components: 'rustfmt, clippy'
+
+      - name: Check Rust formatting
+        if: needs.changes.outputs.rust == 'true'
+        run: cargo fmt --check
+        working-directory: src-tauri
+
+      - name: Run Clippy
+        if: needs.changes.outputs.rust == 'true'
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: src-tauri
+
+  # Unit tests
+  test:
+    runs-on: ubuntu-24.04
+    needs: [changes, lint]
+    if: ${{ needs.changes.outputs.rust == 'true' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        if: needs.changes.outputs.frontend == 'true'
+        uses: ./.github/actions/setup-node
+
+      - name: Setup System Dependencies
+        uses: ./.github/actions/setup-system
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Run tests
+        run: cargo test --verbose
+        working-directory: src-tauri
+
+  # Quick build validation on Linux
+  build:
+    runs-on: ubuntu-24.04
+    needs: [changes, test]
+    if: always() && (needs.test.result == 'success' || needs.test.result == 'skipped')
+    outputs:
+      artifacts-created: ${{ steps.build.outcome == 'success' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        uses: ./.github/actions/setup-node
+
+      - name: Setup System Dependencies
+        uses: ./.github/actions/setup-system
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Build application
+        id: build
+        run: cargo build --release
+        working-directory: src-tauri
+
+      - name: Upload build artifacts for reuse
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-build-${{ github.sha }}
+          path: |
+            src-tauri/target/release/lofi*
+            src-tauri/target/release/deps/*
+          retention-days: 1
+
+  # Cross-platform builds for release validation
+  build-cross-platform:
+    runs-on: ${{ matrix.platform }}
+    needs: [changes, build]
+    if: |
+      always() && 
+      needs.build.result == 'success' &&
+      (github.event_name == 'push' && github.ref_name == 'main') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            target: 'aarch64-apple-darwin'
+            args: '--target aarch64-apple-darwin'
+          - platform: 'macos-latest'
+            target: 'x86_64-apple-darwin'
+            args: '--target x86_64-apple-darwin'
+          - platform: 'ubuntu-24.04'
+            target: 'x86_64-unknown-linux-gnu'
+            args: ''
+          - platform: 'windows-latest'
+            target: 'x86_64-pc-windows-msvc'
+            args: ''
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        uses: ./.github/actions/setup-node
+
+      - name: Setup System Dependencies
+        uses: ./.github/actions/setup-system
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Build release bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ''
+          releaseName: ''
+          releaseBody: ''
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}-${{ matrix.target }}-${{ github.sha }}
+          path: |
+            src-tauri/target/release/bundle/**/*
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*
+          if-no-files-found: warn
+          retention-days: 7
