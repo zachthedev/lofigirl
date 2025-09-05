@@ -92,12 +92,12 @@ git push origin v2.1.0
 
 This triggers an automatic build and release for all platforms.
 
-#### Option 3: Manual Tagging (Legacy)
+#### Option 3: Manual Tagging
 ```bash
 git tag v2.1.0
 git push origin v2.1.0
 ```
-This creates a release but may not include all expected artifacts.
+This triggers an automatic build and release for all platforms.
 
 ### Expected Release Artifacts
 
