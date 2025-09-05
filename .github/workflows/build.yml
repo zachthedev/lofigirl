@@ -33,7 +33,7 @@ jobs:
       - name: Install Node.js dependencies
         run: |
           if [ -f "package.json" ]; then
-            npm ci --only=dev || npm install --only=dev
+            npm ci --include=dev || npm install --include=dev
           fi
 
       - name: Install system dependencies (required for clippy)

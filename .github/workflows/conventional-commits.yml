@@ -22,7 +22,7 @@ jobs:
       
       - name: Install dependencies
         run: |
-          npm ci --only=dev || npm install --only=dev
+          npm ci --include=dev || npm install --include=dev
       
       - name: Check commit messages
         run: |

@@ -30,7 +30,7 @@ jobs:
       
       - name: Install dependencies
         run: |
-          npm ci --only=dev || npm install --only=dev
+          npm ci --include=dev || npm install --include=dev
       
       - name: Set up Git
         run: |
@@ -47,18 +47,16 @@ jobs:
           
           # Track if we need to fix any commits
           NEEDS_FIXING=false
+          FIXED_MESSAGES=""
           
-          # Check each commit in the PR (reverse order for proper rebasing)
-          COMMITS=$(git log --format="%H" --reverse $BASE_SHA..$HEAD_SHA)
-          
-          for commit_hash in $COMMITS; do
-            commit_message=$(git log -1 --format="%s" $commit_hash)
+          # Check each commit in the PR
+          git log --format="%H|%s" --reverse $BASE_SHA..$HEAD_SHA | while IFS='|' read commit_hash commit_message; do
             echo "Checking commit: $commit_hash - $commit_message"
             
             # Test if commit message follows conventional commits
             if ! echo "$commit_message" | npx commitlint --config ./commitlint.config.js --quiet; then
               echo "❌ Commit message needs fixing: $commit_message"
-              NEEDS_FIXING=true
+              echo "NEEDS_FIXING=true" >> $GITHUB_ENV
               
               # Attempt to auto-fix the commit message
               FIXED_MESSAGE=""
@@ -72,6 +70,8 @@ jobs:
                 FIXED_MESSAGE="docs: $(echo "$commit_message" | sed 's/^[Aa]dd[[:space:]]*//' | sed 's/^[Cc]reate[[:space:]]*//')"
               elif echo "$commit_message" | grep -qiE "^(add|create)"; then
                 FIXED_MESSAGE="feat: $(echo "$commit_message" | sed 's/^[Aa]dd[[:space:]]*//' | sed 's/^[Cc]reate[[:space:]]*//')"
+              elif echo "$commit_message" | grep -qiE "^(implement|add).*"; then
+                FIXED_MESSAGE="feat: $(echo "$commit_message" | sed 's/^[Ii]mplement[[:space:]]*//' | sed 's/^[Aa]dd[[:space:]]*//')"
               elif echo "$commit_message" | grep -qiE "^(fix|repair|resolve)"; then
                 FIXED_MESSAGE="fix: $(echo "$commit_message" | sed 's/^[Ff]ix[[:space:]]*//' | sed 's/^[Rr]epair[[:space:]]*//' | sed 's/^[Rr]esolve[[:space:]]*//')"
               elif echo "$commit_message" | grep -qiE "^(update|upgrade|modify|change).*\.md$"; then
@@ -87,53 +87,40 @@ jobs:
                 FIXED_MESSAGE="chore: $commit_message"
               fi
               
-              echo "✅ Suggested fix: $FIXED_MESSAGE"
+              # Convert first character to uppercase for sentence case
+              FIXED_MESSAGE=$(echo "$FIXED_MESSAGE" | sed 's/\(^[a-z]*: \)\(.\)/\1\U\2/')
               
-              # Apply the fix by amending the commit
-              git rebase -i --exec "git commit --amend -m '$FIXED_MESSAGE'" $commit_hash~1
+              echo "✅ Suggested fix: $FIXED_MESSAGE"
+              echo "Original: $commit_message -> Fixed: $FIXED_MESSAGE" >> /tmp/fixed_messages.txt
             else
               echo "✅ Commit message already follows conventional commits"
             fi
           done
-          
-          echo "NEEDS_FIXING=$NEEDS_FIXING" >> $GITHUB_ENV
       
-      - name: Push fixed commits
+      - name: Add informational comment to PR
         if: env.NEEDS_FIXING == 'true'
         run: |
-          git push --force-with-lease origin ${{ github.head_ref }}
-          
-          # Add a comment to the PR explaining what was fixed
-          gh pr comment ${{ github.event.pull_request.number }} --body \
-            "🤖 **Auto-fixed commit messages**
-            
-            Some commit messages in this PR didn't follow the [Conventional Commits](https://www.conventionalcommits.org/) format, so I've automatically fixed them.
-            
-            The commit messages have been updated to follow the proper format:
-            - \`feat:\` for new features
-            - \`fix:\` for bug fixes  
-            - \`docs:\` for documentation changes
-            - \`chore:\` for maintenance tasks
-            - \`style:\` for formatting changes
-            - \`test:\` for test-related changes
-            
-            All commits now pass the conventional commits validation."
+          # Create a comment about the issues found (but don't push fixes)
+          if [ -f /tmp/fixed_messages.txt ]; then
+            FIXED_COUNT=$(wc -l < /tmp/fixed_messages.txt)
+            gh pr comment ${{ github.event.pull_request.number }} --body \
+              "🤖 **Commit Message Issues Found**
+              
+              Found $FIXED_COUNT commit messages that don't follow [Conventional Commits](https://www.conventionalcommits.org/) format:
+              
+              \`\`\`
+              $(cat /tmp/fixed_messages.txt)
+              \`\`\`
+              
+              Please update these commit messages to follow the proper format:
+              - \`feat:\` for new features
+              - \`fix:\` for bug fixes  
+              - \`docs:\` for documentation changes
+              - \`chore:\` for maintenance tasks
+              - \`style:\` for formatting changes
+              - \`test:\` for test-related changes
+              
+              Or you can squash and merge with a proper commit message when merging the PR."
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Re-run conventional commits check
-        if: env.NEEDS_FIXING == 'true'
-        run: |
-          # Get the range of commits for this PR again
-          BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          HEAD_SHA="HEAD"
-          
-          echo "Re-checking fixed commits from $BASE_SHA to $HEAD_SHA"
-          
-          # Check each commit in the PR
-          git log --format="%H %s" $BASE_SHA..$HEAD_SHA | while read commit_hash commit_message; do
-            echo "Checking commit: $commit_hash - $commit_message"
-            echo "$commit_message" | npx commitlint --config ./commitlint.config.js || exit 1
-          done
-          
-          echo "✅ All commit messages now follow conventional commits format!"
