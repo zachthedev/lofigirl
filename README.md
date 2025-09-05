@@ -8,6 +8,18 @@
 ## Usage
 Download the [latest release](https://github.com/zachthedev/lofigirl/releases/latest) and run it.
 
+## Automated Releases
+This project automatically builds for multiple platforms when new versions are tagged:
+- **Windows** (x86_64)
+- **Linux** (Ubuntu 22.04, x86_64) 
+- **macOS** (Intel x86_64 and Apple Silicon aarch64)
+
+Releases are created automatically when you push a tag starting with `v` (e.g., `v1.0.2`):
+```bash
+git tag v1.0.2
+git push origin v1.0.2
+```
+
 ## Notes
 Prebuilt binaries are automatically built for Windows, Linux, and macOS using GitHub Actions. You can download them from the [releases page](https://github.com/zachthedev/lofigirl/releases/latest).
 
