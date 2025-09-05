@@ -13,38 +13,24 @@ if [ ! -f "src-tauri/tauri.conf.json" ]; then
     exit 1
 fi
 
-# Function to create and push branch if it doesn't exist
-create_branch_if_needed() {
-    local branch_name=$1
-    local description=$2
-    
-    if git show-ref --verify --quiet refs/heads/$branch_name; then
-        echo "✅ Branch '$branch_name' already exists"
-    else
-        echo "🌟 Creating '$branch_name' branch - $description"
-        git checkout -b $branch_name
-        git push -u origin $branch_name
-        git checkout main
-    fi
-}
-
 # Ensure we're on main branch
-echo "📍 Switching to main branch..."
+echo "📍 Confirming main branch setup..."
 git checkout main
 git pull origin main
 
-# Create develop branch if it doesn't exist
-create_branch_if_needed "develop" "Integration branch for combining features"
+echo "📋 Branch structure should be set up via GitHub:"
+echo "   • main      - Production releases (protected)"
+echo "   • develop   - Integration branch for features"
 
 echo ""
-echo "🏗️  Branch Structure Setup Complete!"
+echo "🏗️  Pipeline Setup Complete!"
 echo ""
-echo "📋 Your repository now has:"
+echo "📋 Your repository uses:"
 echo "   • main      - Production releases (protected)"
 echo "   • develop   - Integration branch for features"
 echo ""
 echo "🔧 Next steps:"
-echo "   1. Set up branch protection rules on GitHub:"
+echo "   1. Ensure branch protection rules are set up on GitHub:"
 echo "      - Go to Settings → Branches"
 echo "      - Protect 'main' branch (require PR reviews, status checks)"
 echo "      - Protect 'develop' branch (require status checks)"
