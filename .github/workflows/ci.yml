@@ -1,4 +1,4 @@
-name: CI - Build and Test
+name: CI
 
 on:
   pull_request:
@@ -65,16 +65,7 @@ jobs:
       - name: Run Clippy
         run: cd src-tauri && cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Check if conventional commits are enforced (on PR)
-        if: github.event_name == 'pull_request'
-        run: |
-          if [ -f "commitlint.config.js" ] && [ -f "package.json" ]; then
-            echo "✅ Conventional commits are properly configured"
-          else
-            echo "⚠️  Conventional commits configuration may be missing"
-          fi
-
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
     needs: lint-and-format
     steps:

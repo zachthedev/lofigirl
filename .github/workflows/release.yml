@@ -1,5 +1,6 @@
-name: Create Release
+name: Release
 
+# Unified release workflow that handles both manual releases and tag-based releases
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +18,9 @@ on:
         required: false
         default: 'main'
         type: string
+  push:
+    tags:
+      - 'v*.*.*'
 
 permissions:
   contents: write
@@ -26,6 +30,8 @@ env:
 
 jobs:
   prepare-release:
+    # Only run the preparation step for manual releases, not tag pushes
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.create-tag.outputs.tag }}
@@ -95,7 +101,9 @@ jobs:
           echo "tag=${{ inputs.version }}" >> $GITHUB_OUTPUT
 
   build-and-release:
-    needs: prepare-release
+    needs: [prepare-release]
+    # Run if manual release preparation succeeded, OR if this is a tag push
+    if: always() && (needs.prepare-release.result == 'success' || github.event_name == 'push')
     permissions:
       contents: write
     strategy:
@@ -119,7 +127,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare-release.outputs.tag }}
+          # For manual releases, use the created tag; for tag pushes, use the tag that triggered the workflow
+          ref: ${{ needs.prepare-release.outputs.tag || github.ref_name }}
 
       - name: Setup node
         uses: actions/setup-node@v4
@@ -162,15 +171,30 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
+      - name: Get release info
+        id: release_info
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual release
+            echo "tag=${{ needs.prepare-release.outputs.tag }}" >> $GITHUB_OUTPUT
+            echo "prerelease=${{ inputs.prerelease }}" >> $GITHUB_OUTPUT
+            echo "draft=true" >> $GITHUB_OUTPUT
+          else
+            # Tag push
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+            echo "draft=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build the app and create release
         uses: tauri-apps/tauri-action@v0.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ needs.prepare-release.outputs.tag }}
-          releaseName: 'Lofi Girl ${{ needs.prepare-release.outputs.tag }}'
+          tagName: ${{ steps.release_info.outputs.tag }}
+          releaseName: 'Lofi Girl ${{ steps.release_info.outputs.tag }}'
           releaseBody: |
-            ## What's New in ${{ needs.prepare-release.outputs.tag }}
+            ## What's New in ${{ steps.release_info.outputs.tag }}
             
             ### Downloads
             Choose the right download for your platform:
@@ -196,6 +220,6 @@ jobs:
             ---
             
             See the assets below to download and install this version.
-          releaseDraft: ${{ !inputs.prerelease }}
-          prerelease: ${{ inputs.prerelease }}
+          releaseDraft: ${{ steps.release_info.outputs.draft }}
+          prerelease: ${{ steps.release_info.outputs.prerelease }}
           args: ${{ matrix.args }}

@@ -71,7 +71,7 @@ This project uses a robust CI/CD pipeline with multiple release strategies:
 
 #### Option 1: Manual Release Creation (Recommended)
 1. Go to the **Actions** tab in GitHub
-2. Select **"Create Release"** workflow  
+2. Select **"Release"** workflow  
 3. Click **"Run workflow"**
 4. Enter version in format `v2.1.0`
 5. Choose whether it's a pre-release
@@ -90,7 +90,7 @@ git tag v2.1.0
 git push origin v2.1.0
 ```
 
-This triggers an automatic build and release for all platforms.
+This triggers the same unified release workflow automatically.
 
 ### Expected Release Artifacts
 
