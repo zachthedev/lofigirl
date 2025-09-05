@@ -92,13 +92,6 @@ git push origin v2.1.0
 
 This triggers an automatic build and release for all platforms.
 
-#### Option 3: Manual Tagging
-```bash
-git tag v2.1.0
-git push origin v2.1.0
-```
-This triggers an automatic build and release for all platforms.
-
 ### Expected Release Artifacts
 
 Each release includes optimized builds for multiple platforms:

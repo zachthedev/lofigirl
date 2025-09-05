@@ -1,0 +1,139 @@
+name: Auto-fix Conventional Commits
+
+on:
+  pull_request:
+    branches: ["main"]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-fix-commits:
+    runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]'
+    
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+          ref: ${{ github.head_ref }}
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+      
+      - name: Install dependencies
+        run: |
+          npm ci --only=dev || npm install --only=dev
+      
+      - name: Set up Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      
+      - name: Check and fix commit messages
+        run: |
+          # Get the range of commits for this PR
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          
+          echo "Checking commits from $BASE_SHA to $HEAD_SHA"
+          
+          # Track if we need to fix any commits
+          NEEDS_FIXING=false
+          
+          # Check each commit in the PR (reverse order for proper rebasing)
+          COMMITS=$(git log --format="%H" --reverse $BASE_SHA..$HEAD_SHA)
+          
+          for commit_hash in $COMMITS; do
+            commit_message=$(git log -1 --format="%s" $commit_hash)
+            echo "Checking commit: $commit_hash - $commit_message"
+            
+            # Test if commit message follows conventional commits
+            if ! echo "$commit_message" | npx commitlint --config ./commitlint.config.js --quiet; then
+              echo "❌ Commit message needs fixing: $commit_message"
+              NEEDS_FIXING=true
+              
+              # Attempt to auto-fix the commit message
+              FIXED_MESSAGE=""
+              
+              # Common patterns to auto-fix
+              if echo "$commit_message" | grep -qiE "^(delete|remove|rm).*\.md$"; then
+                FIXED_MESSAGE="docs: $(echo "$commit_message" | sed 's/^[Dd]elete[[:space:]]*//' | sed 's/^[Rr]emove[[:space:]]*//' | sed 's/^[Rr]m[[:space:]]*//')"
+              elif echo "$commit_message" | grep -qiE "^(delete|remove|rm)"; then
+                FIXED_MESSAGE="chore: $(echo "$commit_message" | sed 's/^[Dd]elete[[:space:]]*//' | sed 's/^[Rr]emove[[:space:]]*//' | sed 's/^[Rr]m[[:space:]]*//')"
+              elif echo "$commit_message" | grep -qiE "^(add|create).*\.md$"; then
+                FIXED_MESSAGE="docs: $(echo "$commit_message" | sed 's/^[Aa]dd[[:space:]]*//' | sed 's/^[Cc]reate[[:space:]]*//')"
+              elif echo "$commit_message" | grep -qiE "^(add|create)"; then
+                FIXED_MESSAGE="feat: $(echo "$commit_message" | sed 's/^[Aa]dd[[:space:]]*//' | sed 's/^[Cc]reate[[:space:]]*//')"
+              elif echo "$commit_message" | grep -qiE "^(fix|repair|resolve)"; then
+                FIXED_MESSAGE="fix: $(echo "$commit_message" | sed 's/^[Ff]ix[[:space:]]*//' | sed 's/^[Rr]epair[[:space:]]*//' | sed 's/^[Rr]esolve[[:space:]]*//')"
+              elif echo "$commit_message" | grep -qiE "^(update|upgrade|modify|change).*\.md$"; then
+                FIXED_MESSAGE="docs: $(echo "$commit_message" | sed 's/^[Uu]pdate[[:space:]]*//' | sed 's/^[Uu]pgrade[[:space:]]*//' | sed 's/^[Mm]odify[[:space:]]*//' | sed 's/^[Cc]hange[[:space:]]*//')"
+              elif echo "$commit_message" | grep -qiE "^(update|upgrade|modify|change)"; then
+                FIXED_MESSAGE="chore: $(echo "$commit_message" | sed 's/^[Uu]pdate[[:space:]]*//' | sed 's/^[Uu]pgrade[[:space:]]*//' | sed 's/^[Mm]odify[[:space:]]*//' | sed 's/^[Cc]hange[[:space:]]*//')"
+              elif echo "$commit_message" | grep -qiE "^(test|tests)"; then
+                FIXED_MESSAGE="test: $(echo "$commit_message" | sed 's/^[Tt]est[s]*[[:space:]]*//')"
+              elif echo "$commit_message" | grep -qiE "^(style|format)"; then
+                FIXED_MESSAGE="style: $(echo "$commit_message" | sed 's/^[Ss]tyle[[:space:]]*//' | sed 's/^[Ff]ormat[[:space:]]*//')"
+              else
+                # Default to chore if we can't determine the type
+                FIXED_MESSAGE="chore: $commit_message"
+              fi
+              
+              echo "✅ Suggested fix: $FIXED_MESSAGE"
+              
+              # Apply the fix by amending the commit
+              git rebase -i --exec "git commit --amend -m '$FIXED_MESSAGE'" $commit_hash~1
+            else
+              echo "✅ Commit message already follows conventional commits"
+            fi
+          done
+          
+          echo "NEEDS_FIXING=$NEEDS_FIXING" >> $GITHUB_ENV
+      
+      - name: Push fixed commits
+        if: env.NEEDS_FIXING == 'true'
+        run: |
+          git push --force-with-lease origin ${{ github.head_ref }}
+          
+          # Add a comment to the PR explaining what was fixed
+          gh pr comment ${{ github.event.pull_request.number }} --body \
+            "🤖 **Auto-fixed commit messages**
+            
+            Some commit messages in this PR didn't follow the [Conventional Commits](https://www.conventionalcommits.org/) format, so I've automatically fixed them.
+            
+            The commit messages have been updated to follow the proper format:
+            - \`feat:\` for new features
+            - \`fix:\` for bug fixes  
+            - \`docs:\` for documentation changes
+            - \`chore:\` for maintenance tasks
+            - \`style:\` for formatting changes
+            - \`test:\` for test-related changes
+            
+            All commits now pass the conventional commits validation."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Re-run conventional commits check
+        if: env.NEEDS_FIXING == 'true'
+        run: |
+          # Get the range of commits for this PR again
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="HEAD"
+          
+          echo "Re-checking fixed commits from $BASE_SHA to $HEAD_SHA"
+          
+          # Check each commit in the PR
+          git log --format="%H %s" $BASE_SHA..$HEAD_SHA | while read commit_hash commit_message; do
+            echo "Checking commit: $commit_hash - $commit_message"
+            echo "$commit_message" | npx commitlint --config ./commitlint.config.js || exit 1
+          done
+          
+          echo "✅ All commit messages now follow conventional commits format!"
