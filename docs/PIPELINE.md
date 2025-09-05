@@ -108,7 +108,7 @@ Automatically generates changelogs from conventional commits:
 
 ### Multi-Strategy Releases
 1. **Push to Main** - Automatic release on version changes
-2. **Manual Trigger** - `gh workflow run release.yml -f version=v2.1.0`
+2. **Manual Trigger** - `gh workflow run cd.yml -f version=v2.1.0`
 3. **Development** - Auto pre-releases from develop branch
 
 ## Performance Metrics

@@ -96,7 +96,7 @@ When `develop` is merged to `main`, releases trigger automatically based on conv
 #### ⚡ Manual Release
 For immediate releases or version overrides:
 ```bash
-gh workflow run release.yml -f version=v2.1.0 -f prerelease=false
+gh workflow run cd.yml -f version=v2.1.0 -f prerelease=false
 ```
 
 #### 🧪 Development Releases  
