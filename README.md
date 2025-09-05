@@ -11,7 +11,7 @@ Download the [latest release](https://github.com/zachthedev/lofigirl/releases/la
 ## Notes
 Prebuilt binaries are automatically built for Windows, Linux, and macOS using GitHub Actions. You can download them from the [releases page](https://github.com/zachthedev/lofigirl/releases/latest).
 
-The Windows binaries are **unsigned**, so you might get a Smartscreen warning. The only way to fix this is getting an EV code signing certificate which is too expensive for an OSS maintainer. You can build it and sign it yourself or simply ignore the warning.
+The builds are **unsigned**, so you might get a security warning when running them.
 ## Recommended IDE Setup
 
 - [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
