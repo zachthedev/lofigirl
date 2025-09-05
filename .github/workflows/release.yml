@@ -84,7 +84,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "No version changes to commit"
           else
-            git commit -m "chore: Bump version to ${{ inputs.version }}"
+            git commit -m "chore: bump version to ${{ inputs.version }}"
             git push origin HEAD
           fi
 
@@ -95,8 +95,40 @@ jobs:
           git push origin "${{ inputs.version }}"
           echo "tag=${{ inputs.version }}" >> $GITHUB_OUTPUT
 
-  build-and-release:
+  # Try to use existing CI artifacts first, then fall back to full build
+  check-ci-artifacts:
+    runs-on: ubuntu-24.04
     needs: [prepare-release]
+    if: always() && (needs.prepare-release.result == 'success' || github.event_name == 'push')
+    outputs:
+      artifacts_available: ${{ steps.check.outputs.available }}
+      run_id: ${{ steps.check.outputs.run_id }}
+    steps:
+      - name: Check for recent successful CI artifacts
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REF_TO_CHECK="${{ needs.prepare-release.outputs.tag || github.ref_name }}"
+          echo "Checking for CI artifacts for ref: $REF_TO_CHECK"
+          
+          # Get the latest successful CI run for this ref
+          RUN_ID=$(gh api repos/${{ github.repository }}/actions/workflows/ci.yml/runs \
+            --jq ".workflow_runs[] | select(.head_sha == \"$(git rev-parse $REF_TO_CHECK)\") | select(.conclusion == \"success\") | .id" \
+            | head -1)
+          
+          if [ -n "$RUN_ID" ]; then
+            echo "Found successful CI run: $RUN_ID"
+            echo "available=true" >> $GITHUB_OUTPUT
+            echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+          else
+            echo "No recent CI artifacts found, will build from scratch"
+            echo "available=false" >> $GITHUB_OUTPUT
+            echo "run_id=" >> $GITHUB_OUTPUT
+          fi
+
+  build-and-release:
+    needs: [prepare-release, check-ci-artifacts]
     # Run if manual release preparation succeeded, OR if this is a tag push
     if: always() && (needs.prepare-release.result == 'success' || github.event_name == 'push')
     permissions:
@@ -125,18 +157,36 @@ jobs:
         with:
           ref: ${{ needs.prepare-release.outputs.tag || github.ref_name }}
 
+      # Try to download existing artifacts first if available
+      - name: Download CI artifacts
+        if: needs.check-ci-artifacts.outputs.artifacts_available == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts-${{ matrix.platform }}-${{ matrix.target }}
+          run-id: ${{ needs.check-ci-artifacts.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # If no artifacts or download failed, build from scratch
       - name: Setup Node.js
+        if: needs.check-ci-artifacts.outputs.artifacts_available != 'true' || failure()
         uses: actions/setup-node@v4
         with:
           node-version: 'lts/*'
+          cache: npm
+
+      - name: Install Node.js dependencies
+        if: needs.check-ci-artifacts.outputs.artifacts_available != 'true' || failure()
+        run: npm ci || npm install
 
       - name: Setup Rust toolchain
+        if: needs.check-ci-artifacts.outputs.artifacts_available != 'true' || failure()
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Install system dependencies (Ubuntu only)
-        if: matrix.platform == 'ubuntu-24.04'
+        if: (needs.check-ci-artifacts.outputs.artifacts_available != 'true' || failure()) && matrix.platform == 'ubuntu-24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -155,12 +205,13 @@ jobs:
             pkg-config
 
       - name: Setup Xcode (macOS only)
-        if: matrix.platform == 'macos-latest'
+        if: (needs.check-ci-artifacts.outputs.artifacts_available != 'true' || failure()) && matrix.platform == 'macos-latest'
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
 
       - name: Cache Rust dependencies
+        if: needs.check-ci-artifacts.outputs.artifacts_available != 'true' || failure()
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
