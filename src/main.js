@@ -1,5 +1,10 @@
 // Tauri API will be initialized in initializeApp function
-let appWindow, event, open;
+let appWindow, event, open, invoke;
+
+// State tracking for sleep prevention
+let isWindowHidden = false;
+let wasVideoPlaying = false;
+let wasAudioPlaying = false;
   
 function navigateTo(link) {
   if (open) {
@@ -50,7 +55,7 @@ function initAudioVisualizer() {
 
 
 // Toggle between video and audio mode
-function toggleAudioMode() {
+async function toggleAudioMode() {
   const videoPlayer = document.getElementById('video-player');
   const audioMode = document.getElementById('audio-mode');
   const audioToggleIcon = document.getElementById('audio-toggle-icon');
@@ -76,6 +81,92 @@ function toggleAudioMode() {
     if (animationId) {
       cancelAnimationFrame(animationId);
       animationId = null;
+    }
+  }
+  
+  // Notify backend about mode change
+  if (invoke) {
+    try {
+      await invoke('toggle_audio_mode');
+    } catch (error) {
+      console.error('Failed to notify backend of mode change:', error);
+    }
+  }
+}
+
+// Function to pause media to prevent sleep issues
+function pauseMediaForSleep() {
+  const videoPlayer = document.getElementById('video-player');
+  const audioPlayer = document.getElementById('audio-player');
+  
+  // Handle video player (iframe)
+  if (videoPlayer && videoPlayer.style.display !== 'none') {
+    // Save current playing state
+    wasVideoPlaying = true;
+    // Modify iframe src to remove autoplay to prevent sleep issues
+    const currentSrc = videoPlayer.src;
+    if (currentSrc.includes('autoplay=1')) {
+      videoPlayer.src = currentSrc.replace('autoplay=1', 'autoplay=0');
+    }
+  }
+  
+  // Handle audio player
+  if (audioPlayer && !audioPlayer.paused) {
+    wasAudioPlaying = true;
+    audioPlayer.pause();
+  }
+}
+
+// Function to resume media when window is shown
+function resumeMediaAfterSleep() {
+  const videoPlayer = document.getElementById('video-player');
+  const audioPlayer = document.getElementById('audio-player');
+  
+  // Handle video player (iframe)
+  if (videoPlayer && videoPlayer.style.display !== 'none' && wasVideoPlaying) {
+    // Restore autoplay
+    const currentSrc = videoPlayer.src;
+    if (currentSrc.includes('autoplay=0')) {
+      videoPlayer.src = currentSrc.replace('autoplay=0', 'autoplay=1');
+    }
+    wasVideoPlaying = false;
+  }
+  
+  // Handle audio player
+  if (audioPlayer && wasAudioPlaying) {
+    audioPlayer.play().catch(e => console.error('Failed to resume audio:', e));
+    wasAudioPlaying = false;
+  }
+}
+
+// Function to handle play/pause toggle
+function togglePlayback() {
+  if (isAudioMode) {
+    // Handle audio mode
+    const audioPlayer = document.getElementById('audio-player');
+    const playPauseBtn = document.querySelector("#play-pause img");
+    
+    if (audioPlayer && playPauseBtn) {
+      if (audioPlayer.paused) {
+        audioPlayer.play();
+        playPauseBtn.src = 'https://api.iconify.design/ph:pause-bold.svg';
+        playPauseBtn.alt = 'pause';
+      } else {
+        audioPlayer.pause();
+        playPauseBtn.src = 'https://api.iconify.design/ph:play-bold.svg';
+        playPauseBtn.alt = 'play';
+      }
+    }
+  } else {
+    // Handle video mode - toggle autoplay
+    const videoPlayer = document.getElementById('video-player');
+    if (videoPlayer) {
+      const currentSrc = videoPlayer.src;
+      if (currentSrc.includes('autoplay=1')) {
+        videoPlayer.src = currentSrc.replace('autoplay=1', 'autoplay=0');
+      } else if (currentSrc.includes('autoplay=0')) {
+        videoPlayer.src = currentSrc.replace('autoplay=0', 'autoplay=1');
+      }
     }
   }
 }
@@ -141,8 +232,50 @@ async function initializeApp() {
     ({ appWindow } = window.__TAURI__.window);
     ({ event } = window.__TAURI__.event);
     ({ open } = window.__TAURI__.shell);
+    ({ invoke } = window.__TAURI__.core);
 
     console.log('Tauri API references initialized');
+
+    // Listen for window visibility events from tray
+    await event.listen('window-hidden', () => {
+      console.log('Window hidden event received');
+      isWindowHidden = true;
+      pauseMediaForSleep();
+      if (invoke) {
+        invoke('set_window_visibility', { visible: false }).catch(e => 
+          console.error('Failed to update visibility state:', e)
+        );
+      }
+    });
+
+    await event.listen('window-shown', () => {
+      console.log('Window shown event received');
+      isWindowHidden = false;
+      resumeMediaAfterSleep();
+      if (invoke) {
+        invoke('set_window_visibility', { visible: true }).catch(e => 
+          console.error('Failed to update visibility state:', e)
+        );
+      }
+    });
+
+    // Listen for tray-initiated actions
+    await event.listen('toggle-playback-from-tray', () => {
+      console.log('Toggle playback from tray');
+      togglePlayback();
+      if (invoke) {
+        invoke('toggle_playback').catch(e => 
+          console.error('Failed to update playback state:', e)
+        );
+      }
+    });
+
+    await event.listen('toggle-mode-from-tray', () => {
+      console.log('Toggle mode from tray');
+      toggleAudioMode();
+    });
+
+    console.log('Tauri event listeners set up successfully');
 
     // Set up event listeners
     const goToGitHub = document.getElementById("goToGitHub");
@@ -159,7 +292,16 @@ async function initializeApp() {
     if (minimizeBtn) {
       minimizeBtn.addEventListener("click", () => {
         console.log('Minimize clicked');
+        // Pause media before minimizing to prevent sleep issues
+        pauseMediaForSleep();
         appWindow.minimize();
+        
+        // Update backend state
+        if (invoke) {
+          invoke('set_window_visibility', { visible: false }).catch(e => 
+            console.error('Failed to update visibility state:', e)
+          );
+        }
       });
     } else {
       console.error('titlebar-minimize element not found');
@@ -201,19 +343,14 @@ async function initializeApp() {
     const playPauseBtn = document.getElementById("play-pause");
     if (playPauseBtn) {
       playPauseBtn.addEventListener("click", () => {
-        const audioElement = document.getElementById('audio-player');
-        const buttonIcon = document.querySelector("#play-pause img");
+        console.log('Play/Pause button clicked');
+        togglePlayback();
         
-        if (audioElement && buttonIcon) {
-          if (audioElement.paused) {
-            audioElement.play();
-            buttonIcon.src = 'https://api.iconify.design/ph:pause-bold.svg';
-            buttonIcon.alt = 'pause';
-          } else {
-            audioElement.pause();
-            buttonIcon.src = 'https://api.iconify.design/ph:play-bold.svg';
-            buttonIcon.alt = 'play';
-          }
+        // Update backend state
+        if (invoke) {
+          invoke('toggle_playback').catch(e => 
+            console.error('Failed to update playback state:', e)
+          );
         }
       });
     }
