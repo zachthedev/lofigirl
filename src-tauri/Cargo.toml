@@ -5,7 +5,7 @@ description = "Listen to Lofi Girl radio on your desktop with minimalist design,
 authors = ["ZachTheDev", "Unai Mengual <git@owln.ai>", "Original contributors"]
 license = "MIT"
 repository = "https://github.com/zachthedev/lofigirl"
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
