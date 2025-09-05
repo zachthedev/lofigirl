@@ -1,5 +1,6 @@
 <p align="center">
-<img src="https://repository-images.githubusercontent.com/658017980/ae660816-9106-4d50-8149-752add67a3cc" alt="Screenshot of the Lofi player">
+TODO IMAGE
+<img src="" alt="Screenshot of the Lofi player">
 </p>
 <p align="center">
   Lofi Girl embedded in a lightweight Tauri application.
