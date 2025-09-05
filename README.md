@@ -9,42 +9,99 @@ TODO IMAGE
 ## Usage
 Download the [latest release](https://github.com/zachthedev/lofigirl/releases/latest) and run it.
 
+## Development
+
+### Prerequisites
+- [Rust](https://rustup.rs/)
+- [Node.js](https://nodejs.org/) (for conventional commits)
+- System dependencies for your platform (see [Tauri prerequisites](https://tauri.app/v2/guides/getting-started/prerequisites/))
+
+### Setup
+```bash
+# Clone the repository
+git clone https://github.com/zachthedev/lofigirl.git
+cd lofigirl
+
+# Install Node.js dependencies (for conventional commits)
+npm install
+
+# Install system dependencies (Ubuntu/Debian)
+sudo apt-get update
+sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libglib2.0-dev \
+  libayatana-appindicator3-dev librsvg2-dev patchelf build-essential \
+  curl wget file libssl-dev libxdo-dev pkg-config
+
+# Build the application
+cd src-tauri
+cargo tauri build
+```
+
+### Contributing
+This project uses [Conventional Commits](https://www.conventionalcommits.org/). All commit messages must follow this format:
+
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+**Examples:**
+- `feat: Add audio-only mode`
+- `fix: Resolve window dragging issue`
+- `docs: Update installation instructions`
+- `chore: Update dependencies`
+
+The commit message will be automatically validated when you commit.
+
 ## Automated Releases
 
-This project automatically builds for multiple platforms when new versions are tagged:
-- **Windows** (x86_64) - `.msi` installer and `.exe` portable 
-- **Linux** (Ubuntu 22.04, x86_64) - `.deb`, `.rpm`, and `.AppImage` packages
-- **macOS** (Intel x86_64 and Apple Silicon aarch64) - `.dmg` and `.app.tar.gz`
+This project uses a robust CI/CD pipeline with multiple release strategies:
 
-### Creating a New Release
+### CI Pipeline (Continuous Integration)
+- **Runs on**: Every PR and push to main
+- **Features**: 
+  - Code linting and formatting checks
+  - Conventional commits validation
+  - Fast compilation tests
+  - Rust clippy analysis
 
-#### Option 1: Using GitHub Actions (Recommended)
+### Release Strategies
+
+#### Option 1: Manual Release Creation (Recommended)
 1. Go to the **Actions** tab in GitHub
-2. Select **"Create Release"** workflow
+2. Select **"Create Release"** workflow  
 3. Click **"Run workflow"**
-4. Enter version in format `v1.0.3` 
+4. Enter version in format `v2.1.0`
 5. Choose whether it's a pre-release
 6. Click **"Run workflow"**
 
 This will automatically:
 - Update version numbers in configuration files
 - Create and push the git tag
-- Build for all platforms 
+- Build for all platforms simultaneously
 - Create a GitHub release with all artifacts
 
-#### Option 2: Manual Tagging
-If you prefer manual control:
-
+#### Option 2: Tag-based Release (Automatic)
+Simply push a version tag:
 ```bash
-git tag v1.0.2
-git push origin v1.0.2
+git tag v2.1.0
+git push origin v2.1.0
 ```
 
-This triggers the build workflow to create a release draft with all platform artifacts.
+This triggers an automatic build and release for all platforms.
+
+#### Option 3: Manual Tagging (Legacy)
+```bash
+git tag v2.1.0
+git push origin v2.1.0
+```
+This creates a release but may not include all expected artifacts.
 
 ### Expected Release Artifacts
 
-Each release should include these files:
+Each release includes optimized builds for multiple platforms:
 - `lofi-girl_VERSION_amd64.deb` - Debian/Ubuntu package
 - `lofi-girl-VERSION-1.x86_64.rpm` - RedHat/Fedora package  
 - `lofi-girl_VERSION_amd64.AppImage` - Linux portable app

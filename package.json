@@ -1,0 +1,27 @@
+{
+  "name": "lofigirl",
+  "version": "2.1.0",
+  "description": "Lofi Girl desktop radio player",
+  "scripts": {
+    "prepare": "husky install || true",
+    "commitlint": "commitlint --edit"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.4.0",
+    "@commitlint/config-conventional": "^19.2.2",
+    "husky": "^9.1.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zachthedev/lofigirl.git"
+  },
+  "keywords": [
+    "lofi",
+    "music",
+    "radio",
+    "desktop",
+    "tauri"
+  ],
+  "author": "ZachTheDev",
+  "license": "MIT"
+}

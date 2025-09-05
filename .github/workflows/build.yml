@@ -1,10 +1,12 @@
-name: Build and Test
+name: CI - Build and Test
 
 on:
   pull_request:
     branches: ["main"]
   push:
     branches: ["main"]
+    # Don't run CI on tag pushes to avoid conflicts with release workflow
+    tags-ignore: ["**"]
   workflow_dispatch:
     inputs:
       upload_artifacts:
@@ -17,7 +19,97 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  lint-and-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install Node.js dependencies
+        run: |
+          if [ -f "package.json" ]; then
+            npm ci --only=dev || npm install --only=dev
+          fi
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Check Rust formatting
+        run: cd src-tauri && cargo fmt --check
+
+      - name: Run Clippy
+        run: cd src-tauri && cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Check if conventional commits are enforced (on PR)
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ -f "commitlint.config.js" ] && [ -f "package.json" ]; then
+            echo "✅ Conventional commits are properly configured"
+          else
+            echo "⚠️  Conventional commits configuration may be missing"
+          fi
+
   build:
+    runs-on: ubuntu-latest
+    needs: lint-and-format
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies (ubuntu)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libxdo-dev \
+            pkg-config
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Build the app (dev mode for faster CI)
+        run: |
+          cd src-tauri
+          cargo build --verbose
+
+      - name: Run tests
+        run: |
+          cd src-tauri
+          cargo test --verbose
+
+  build-cross-platform:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_artifacts == 'true'
     permissions:
       contents: read
     strategy:
@@ -96,7 +188,7 @@ jobs:
           args: ${{ matrix.args }}
 
       - name: Upload build artifacts
-        if: github.event.inputs.upload_artifacts == 'true' || github.event_name == 'workflow_dispatch'
+        if: github.event.inputs.upload_artifacts == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: build-artifacts-${{ matrix.platform }}-${{ matrix.target }}

@@ -21,110 +21,19 @@ on:
 permissions:
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  trigger-build:
-    runs-on: ubuntu-latest
-    outputs:
-      run-id: ${{ steps.trigger.outputs.run-id }}
-    steps:
-      - name: Trigger build workflow and wait for completion
-        id: trigger
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            // Trigger build workflow
-            const response = await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'build.yml',
-              ref: '${{ inputs.build_ref }}',
-              inputs: {
-                upload_artifacts: 'true'
-              }
-            });
-            
-            console.log('Build workflow triggered');
-            
-            // Wait for workflow to start and get run ID
-            let runId = null;
-            let attempts = 0;
-            while (!runId && attempts < 10) {
-              await new Promise(resolve => setTimeout(resolve, 3000));
-              
-              const runs = await github.rest.actions.listWorkflowRuns({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: 'build.yml',
-                per_page: 10
-              });
-              
-              // Find the most recent run that's in progress
-              const recentRun = runs.data.workflow_runs.find(run => 
-                run.status === 'in_progress' || run.status === 'queued'
-              );
-              
-              if (recentRun) {
-                runId = recentRun.id;
-                console.log(`Found workflow run: ${runId}`);
-              }
-              attempts++;
-            }
-            
-            if (!runId) {
-              core.setFailed('Could not find triggered workflow run');
-              return;
-            }
-            
-            core.setOutput('run-id', runId);
-            
-            // Wait for completion
-            let completed = false;
-            let waitAttempts = 0;
-            const maxWaitAttempts = 40; // 20 minutes max
-            
-            while (!completed && waitAttempts < maxWaitAttempts) {
-              const run = await github.rest.actions.getWorkflowRun({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                run_id: runId
-              });
-              
-              console.log(`Build status: ${run.data.status} (${run.data.conclusion})`);
-              
-              if (run.data.status === 'completed') {
-                if (run.data.conclusion === 'success') {
-                  completed = true;
-                  console.log('Build completed successfully');
-                } else {
-                  core.setFailed(`Build failed with conclusion: ${run.data.conclusion}`);
-                  return;
-                }
-              } else {
-                await new Promise(resolve => setTimeout(resolve, 30000)); // Wait 30 seconds
-                waitAttempts++;
-              }
-            }
-            
-            if (!completed) {
-              core.setFailed('Build did not complete within timeout');
-            }
-
-  wait-for-build:
-    needs: trigger-build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Build completed
-        run: echo "Build workflow completed with run ID ${{ needs.trigger-build.outputs.run-id }}"
-
-  create-tag-and-release:
-    needs: wait-for-build
+  prepare-release:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.create-tag.outputs.tag }}
+      version_no_v: ${{ steps.version.outputs.version_no_v }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.build_ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Validate version format
@@ -141,19 +50,26 @@ jobs:
             exit 1
           fi
 
-      - name: Update version in tauri.conf.json
+      - name: Set version output
+        id: version
         run: |
           VERSION="${{ inputs.version }}"
           VERSION_NO_V="${VERSION#v}"
-          # Use jq to safely update the version field
+          echo "version_no_v=$VERSION_NO_V" >> $GITHUB_OUTPUT
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Update version in tauri.conf.json
+        run: |
+          VERSION_NO_V="${{ steps.version.outputs.version_no_v }}"
           jq --arg version "$VERSION_NO_V" '.version = $version' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
           echo "Updated tauri.conf.json version to: $VERSION_NO_V"
           grep '"version"' src-tauri/tauri.conf.json
 
       - name: Update version in Cargo.toml
         run: |
-          VERSION="${{ inputs.version }}"
-          VERSION_NO_V="${VERSION#v}"
+          VERSION_NO_V="${{ steps.version.outputs.version_no_v }}"
           sed -i "s/^version = \".*\"/version = \"$VERSION_NO_V\"/" src-tauri/Cargo.toml
           echo "Updated Cargo.toml version to: $VERSION_NO_V"
           grep '^version =' src-tauri/Cargo.toml
@@ -166,7 +82,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "No version changes to commit"
           else
-            git commit -m "chore: bump version to ${{ inputs.version }}"
+            git commit -m "chore: Bump version to ${{ inputs.version }}"
             git push origin HEAD
             echo "Committed and pushed version changes"
           fi
@@ -178,104 +94,99 @@ jobs:
           git push origin "${{ inputs.version }}"
           echo "tag=${{ inputs.version }}" >> $GITHUB_OUTPUT
 
-  publish-release:
-    needs: [create-tag-and-release, trigger-build]
+  build-and-release:
+    needs: prepare-release
     permissions:
       contents: write
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest' # for Arm based macs (M1 and above).
+            args: '--target aarch64-apple-darwin'
+            target: 'aarch64-apple-darwin'
+          - platform: 'macos-latest' # for Intel based macs.
+            args: '--target x86_64-apple-darwin'
+            target: 'x86_64-apple-darwin'
+          - platform: 'ubuntu-22.04'
+            args: ''
+            target: 'x86_64-unknown-linux-gnu'
+          - platform: 'windows-latest'
+            args: ''
+            target: 'x86_64-pc-windows-msvc'
+
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.create-tag-and-release.outputs.tag }}
+          ref: ${{ needs.prepare-release.outputs.tag }}
 
-      - name: Download all build artifacts  
-        uses: actions/github-script@v7
+      - name: Setup node
+        uses: actions/setup-node@v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const runId = '${{ needs.trigger-build.outputs.run-id }}';
-            
-            // Get artifacts from the build run
-            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: runId
-            });
-            
-            console.log(`Found ${artifacts.data.artifacts.length} artifacts`);
-            
-            const fs = require('fs');
-            const path = require('path');
-            
-            // Create artifacts directory
-            if (!fs.existsSync('./artifacts')) {
-              fs.mkdirSync('./artifacts', { recursive: true });
-            }
-            
-            // Download each artifact
-            for (const artifact of artifacts.data.artifacts) {
-              if (artifact.name.startsWith('build-artifacts-')) {
-                console.log(`Downloading artifact: ${artifact.name}`);
-                
-                const download = await github.rest.actions.downloadArtifact({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  artifact_id: artifact.id,
-                  archive_format: 'zip'
-                });
-                
-                const artifactPath = `./artifacts/${artifact.name}.zip`;
-                fs.writeFileSync(artifactPath, Buffer.from(download.data));
-                console.log(`Saved artifact to ${artifactPath}`);
-              }
-            }
+          node-version: lts/*
 
-      - name: Extract artifacts
-        run: |
-          cd artifacts
-          for zip_file in *.zip; do
-            if [ -f "$zip_file" ]; then
-              echo "Extracting $zip_file..."
-              unzip -q "$zip_file"
-              rm "$zip_file"
-            fi
-          done
-
-      - name: List downloaded artifacts
-        run: |
-          echo "Downloaded artifacts:"
-          find ./artifacts -type f | sort
-
-      - name: Create release with artifacts
-        uses: actions/github-script@v7
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
         with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            
-            // Create release
-            const release = await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: '${{ needs.create-tag-and-release.outputs.tag }}',
-              name: 'Lofi Girl ${{ needs.create-tag-and-release.outputs.tag }}',
-              body: `## What's New in ${{ needs.create-tag-and-release.outputs.tag }}
+          # Those targets are only used on macos runners so it's in an `if` to slightly speed up the linux/windows builds.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libxdo-dev \
+            pkg-config
+
+      - name: Setup Xcode (macOS only)
+        if: matrix.platform == 'macos-latest'
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Build the app and create release
+        uses: tauri-apps/tauri-action@v0.5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ needs.prepare-release.outputs.tag }}
+          releaseName: 'Lofi Girl ${{ needs.prepare-release.outputs.tag }}'
+          releaseBody: |
+            ## What's New in ${{ needs.prepare-release.outputs.tag }}
             
             ### Downloads
             Choose the right download for your platform:
             
             **Windows:**
-            - \`.msi\` - Windows installer (recommended)
-            - \`.exe\` - Portable executable
+            - `.msi` - Windows installer (recommended)
+            - `.exe` - Portable executable
             
             **macOS:**
-            - \`.dmg\` - macOS disk image (recommended)
-            - \`.app.tar.gz\` - Application bundle
+            - `.dmg` - macOS disk image (recommended)
+            - `.app.tar.gz` - Application bundle
             
             **Linux:**
-            - \`.deb\` - Debian/Ubuntu package
-            - \`.rpm\` - RedHat/Fedora package  
-            - \`.AppImage\` - Portable application
+            - `.deb` - Debian/Ubuntu package
+            - `.rpm` - RedHat/Fedora package  
+            - `.AppImage` - Portable application
             
             ### Installation Notes
             The builds are **unsigned**, so you might get a security warning when running them:
@@ -284,44 +195,7 @@ jobs:
             
             ---
             
-            See the assets below to download and install this version.`,
-              draft: ${{ !inputs.prerelease }},
-              prerelease: ${{ inputs.prerelease }}
-            });
-            
-            // Upload artifacts
-            const artifactTypes = ['.exe', '.msi', '.deb', '.rpm', '.AppImage', '.dmg', '.app.tar.gz'];
-            
-            function findFiles(dir, extensions) {
-              const files = [];
-              function walkDir(currentPath) {
-                const items = fs.readdirSync(currentPath);
-                for (const item of items) {
-                  const fullPath = path.join(currentPath, item);
-                  if (fs.statSync(fullPath).isDirectory()) {
-                    walkDir(fullPath);
-                  } else if (extensions.some(ext => item.endsWith(ext))) {
-                    files.push(fullPath);
-                  }
-                }
-              }
-              walkDir(dir);
-              return files;
-            }
-            
-            const artifactFiles = findFiles('./artifacts', artifactTypes);
-            console.log('Found artifact files:', artifactFiles);
-            
-            for (const filePath of artifactFiles) {
-              const fileName = path.basename(filePath);
-              const data = fs.readFileSync(filePath);
-              
-              console.log(`Uploading ${fileName}...`);
-              await github.rest.repos.uploadReleaseAsset({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                release_id: release.data.id,
-                name: fileName,
-                data: data
-              });
-            }
+            See the assets below to download and install this version.
+          releaseDraft: ${{ !inputs.prerelease }}
+          prerelease: ${{ inputs.prerelease }}
+          args: ${{ matrix.args }}
