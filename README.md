@@ -6,12 +6,12 @@
 </p>
 
 ## Usage
-Download the [latest release](https://github.com/owlnai/lofi-in-your-desktop/releases/latest) and run it.
+Download the [latest release](https://github.com/zachthedev/lofigirl/releases/latest) and run it.
 
 ## Notes
-At the moment only prebuilt **unsigned** Windows binaries are provided. Until there's GitHub Actions support, you'll have to build it on Linux or MacOS.
+Prebuilt binaries are automatically built for Windows, Linux, and macOS using GitHub Actions. You can download them from the [releases page](https://github.com/zachthedev/lofigirl/releases/latest).
 
-Since they're unsigned, you might get a Smartscreen warning on Windows. The only way to fix this is getting a EV code signing cert which is too expensive for a OSS maintainer. Again, you can build it and sign it by yourself or simply ignore the warning.
+The Windows binaries are **unsigned**, so you might get a Smartscreen warning. The only way to fix this is getting an EV code signing certificate which is too expensive for an OSS maintainer. You can build it and sign it yourself or simply ignore the warning.
 ## Recommended IDE Setup
 
 - [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
