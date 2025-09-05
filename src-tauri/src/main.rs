@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tauri::{
-    AppHandle, AppHandle, Emitter, Manager, Manager, State,
+    AppHandle, Emitter, Manager, State,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
