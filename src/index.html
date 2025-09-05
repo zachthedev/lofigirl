@@ -69,18 +69,18 @@
            autoplay
            loop>
       <source src="https://www.youtube.com/watch?v=jfKfPfyJRdk" type="audio/mpeg">
-      <!-- Fallback to a direct audio stream - this would need a proper audio URL -->
+      Your browser does not support the audio element.
     </audio>
     
     <div class="visualizer-container">
-      <canvas id="visualizer" width="800" height="400"></canvas>
+      <canvas id="visualizer"></canvas>
       <div class="audio-info">
-        <h2>🎵 Lofi Hip Hop Radio</h2>
+        <h2><img src="https://api.iconify.design/ph:music-note-bold.svg" alt="music" class="inline-icon" /> Lofi Hip Hop Radio</h2>
         <p>24/7 chill beats to study/relax to</p>
         <div class="audio-controls">
-          <button id="play-pause">⏸️</button>
+          <button id="play-pause"><img src="https://api.iconify.design/ph:pause-bold.svg" alt="pause" class="button-icon" /></button>
           <div class="volume-control">
-            <span>🔊</span>
+            <img src="https://api.iconify.design/ph:speaker-high-bold.svg" alt="volume" class="inline-icon" />
             <input type="range" id="volume-slider" min="0" max="100" value="70">
           </div>
         </div>

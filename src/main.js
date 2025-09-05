@@ -22,68 +22,31 @@ function initAudioVisualizer() {
   canvas = document.getElementById('visualizer');
   canvasContext = canvas.getContext('2d');
   
-  // Set canvas size to match CSS
-  canvas.width = 800;
-  canvas.height = 400;
+  // Set canvas size responsively based on container
+  const container = document.querySelector('.visualizer-container');
+  const containerRect = container.getBoundingClientRect();
+  canvas.width = containerRect.width || window.innerWidth;
+  canvas.height = containerRect.height || window.innerHeight * 0.6;
+  
+  // Update canvas size on window resize
+  window.addEventListener('resize', () => {
+    const newRect = container.getBoundingClientRect();
+    canvas.width = newRect.width || window.innerWidth;
+    canvas.height = newRect.height || window.innerHeight * 0.6;
+  });
   
   if (!audioContext) {
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 256;
     
-    const source = audioContext.createMediaElementSource(audioElement);
-    source.connect(analyser);
-    analyser.connect(audioContext.destination);
-    
     dataArray = new Uint8Array(analyser.frequencyBinCount);
   }
   
-  drawVisualizer();
+  // Start the animated visualizer
+  drawAnimatedVisualizer();
 }
 
-// Draw the audio visualizer
-function drawVisualizer() {
-  if (!isAudioMode) return;
-  
-  animationId = requestAnimationFrame(drawVisualizer);
-  
-  analyser.getByteFrequencyData(dataArray);
-  
-  canvasContext.fillStyle = 'rgba(0, 0, 0, 0.1)';
-  canvasContext.fillRect(0, 0, canvas.width, canvas.height);
-  
-  const barWidth = (canvas.width / dataArray.length) * 2;
-  let barHeight;
-  let x = 0;
-  
-  for (let i = 0; i < dataArray.length; i++) {
-    barHeight = (dataArray[i] / 255) * canvas.height * 0.8;
-    
-    // Create gradient for bars
-    const gradient = canvasContext.createLinearGradient(0, canvas.height - barHeight, 0, canvas.height);
-    gradient.addColorStop(0, `hsl(${i * 2}, 100%, 80%)`);
-    gradient.addColorStop(1, `hsl(${i * 2}, 100%, 40%)`);
-    
-    canvasContext.fillStyle = gradient;
-    canvasContext.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
-    
-    x += barWidth + 1;
-  }
-  
-  // Add some floating particles for extra effect
-  if (Math.random() > 0.9) {
-    canvasContext.beginPath();
-    canvasContext.arc(
-      Math.random() * canvas.width,
-      Math.random() * canvas.height,
-      Math.random() * 3 + 1,
-      0,
-      Math.PI * 2
-    );
-    canvasContext.fillStyle = `hsla(${Math.random() * 360}, 100%, 80%, 0.6)`;
-    canvasContext.fill();
-  }
-}
 
 // Toggle between video and audio mode
 function toggleAudioMode() {
@@ -100,15 +63,8 @@ function toggleAudioMode() {
     audioToggleIcon.src = 'https://api.iconify.design/ph:video-bold.svg';
     audioToggleIcon.alt = 'switch to video';
     
-    // Since we can't extract audio from YouTube directly, we'll create a mock audio experience
-    // with a generated visualization based on a default audio context
-    try {
-      initAudioVisualizer();
-    } catch (error) {
-      console.error('Audio initialization failed:', error);
-      // Fallback: create visualization without audio input
-      createMockVisualization();
-    }
+    // Initialize audio visualizer with animation
+    initAudioVisualizer();
   } else {
     // Switch back to video mode
     videoPlayer.style.display = 'block';
@@ -123,11 +79,11 @@ function toggleAudioMode() {
   }
 }
 
-// Create mock visualization when audio extraction isn't available
-function createMockVisualization() {
+// Create animated visualization for audio mode
+function drawAnimatedVisualizer() {
   if (!isAudioMode) return;
   
-  animationId = requestAnimationFrame(createMockVisualization);
+  animationId = requestAnimationFrame(drawAnimatedVisualizer);
   
   canvasContext.fillStyle = 'rgba(0, 0, 0, 0.1)';
   canvasContext.fillRect(0, 0, canvas.width, canvas.height);
@@ -177,7 +133,7 @@ async function initializeApp() {
 
   // Set up event listeners
   document.getElementById("goToGitHub").addEventListener("click", () => {
-    open("https://github.com/zachthedev/lofigirl")
+    open("https://github.com/zachthedev/lofigirl");
   });
   
   document.getElementById("titlebar-minimize").addEventListener("click", () => {
@@ -204,14 +160,16 @@ async function initializeApp() {
   // Audio controls
   document.getElementById("play-pause").addEventListener("click", () => {
     const audioElement = document.getElementById('audio-player');
-    const button = document.getElementById("play-pause");
+    const buttonIcon = document.querySelector("#play-pause img");
     
     if (audioElement.paused) {
       audioElement.play();
-      button.textContent = '⏸️';
+      buttonIcon.src = 'https://api.iconify.design/ph:pause-bold.svg';
+      buttonIcon.alt = 'pause';
     } else {
       audioElement.pause();
-      button.textContent = '▶️';
+      buttonIcon.src = 'https://api.iconify.design/ph:play-bold.svg';
+      buttonIcon.alt = 'play';
     }
   });
   
