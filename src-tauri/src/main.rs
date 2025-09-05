@@ -4,61 +4,87 @@
 )]
 
 use tauri::{
-    CustomMenuItem, SystemTray, SystemTrayMenu, SystemTrayMenuItem, 
-    Manager, SystemTrayEvent
+    menu::{MenuBuilder, MenuItemBuilder},
+    tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState},
+    Manager, AppHandle,
 };
 
-fn build_tray() -> SystemTray {
-    let quit = CustomMenuItem::new("quit".to_string(), "Quit");
-    let hide = CustomMenuItem::new("hide".to_string(), "Hide");
-    let show = CustomMenuItem::new("show".to_string(), "Show");
+fn build_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let show = MenuItemBuilder::new("Show")
+        .id("show")
+        .build(app)?;
+    let hide = MenuItemBuilder::new("Hide")
+        .id("hide")
+        .build(app)?;
+    let quit = MenuItemBuilder::new("Quit")
+        .id("quit")
+        .build(app)?;
     
-    let tray_menu = SystemTrayMenu::new()
-        .add_item(show)
-        .add_item(hide)
-        .add_native_item(SystemTrayMenuItem::Separator)
-        .add_item(quit);
+    let menu = MenuBuilder::new(app)
+        .item(&show)
+        .item(&hide)
+        .separator()
+        .item(&quit)
+        .build()?;
 
-    SystemTray::new().with_menu(tray_menu)
+    TrayIconBuilder::new()
+        .icon(app.default_window_icon().unwrap().clone())
+        .menu(&menu)
+        .on_menu_event(move |app, event| {
+            match event.id().as_ref() {
+                "show" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+                "hide" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.hide();
+                    }
+                }
+                "quit" => {
+                    app.exit(0);
+                }
+                _ => {}
+            }
+        })
+        .on_tray_icon_event(move |tray, event| {
+            if let TrayIconEvent::Click { 
+                button: MouseButton::Left, 
+                button_state: MouseButtonState::Up, 
+                .. 
+            } = event {
+                let app = tray.app_handle();
+                if let Some(window) = app.get_webview_window("main") {
+                    let is_visible = window.is_visible().unwrap_or(false);
+                    if is_visible {
+                        let _ = window.hide();
+                    } else {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
+        })
+        .build(app)?;
+
+    Ok(())
 }
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            let window = app.get_window("main").unwrap();
-            window.hide().unwrap();
-            Ok(())
-        })
-        .system_tray(build_tray())
-        .on_system_tray_event(|app, event| match event {
-            SystemTrayEvent::LeftClick {
-                position: _,
-                size: _,
-                ..
-            } => {
-                let window = app.get_window("main").unwrap();
-                if window.is_visible().unwrap_or(false) {
-                    window.hide().unwrap();
-                } else {
-                    window.show().unwrap();
-                }
+            // Hide the window on startup
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.hide();
             }
-            SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
-                "hide" => {
-                    let window = app.get_window("main").unwrap();
-                    window.hide().unwrap();
-                }
-                "show" => {
-                    let window = app.get_window("main").unwrap();
-                    window.show().unwrap();
-                }
-                "quit" => {
-                    let window = app.get_window("main").unwrap();
-                    window.close().unwrap();
-                }
-                _ => {}
-            },
-            _ => {}
+            
+            // Set up system tray
+            build_tray(app.handle())?;
+            
+            Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
