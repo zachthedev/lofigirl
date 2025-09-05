@@ -3,14 +3,13 @@
     windows_subsystem = "windows"
 )]
 
-use tauri::{
-    AppHandle, Manager,
-    menu::{MenuBuilder, MenuItemBuilder},
-    tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState},
-    Manager, AppHandle, State, Emitter,
-};
-use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
+use tauri::{
+    AppHandle, AppHandle, Emitter, Manager, Manager, State,
+    menu::{MenuBuilder, MenuItemBuilder},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppState {
@@ -39,10 +38,12 @@ async fn toggle_audio_mode(state: State<'_, AppStateType>, app: AppHandle) -> Re
         app_state.is_audio_mode = !app_state.is_audio_mode;
         app_state.is_audio_mode
     };
-    
+
     // Update tray menu to reflect new state
-    update_tray_menu(&app, &state).await.map_err(|e| e.to_string())?;
-    
+    update_tray_menu(&app, &state)
+        .await
+        .map_err(|e| e.to_string())?;
+
     Ok(is_audio_mode)
 }
 
@@ -53,23 +54,31 @@ async fn toggle_playback(state: State<'_, AppStateType>, app: AppHandle) -> Resu
         app_state.is_playing = !app_state.is_playing;
         app_state.is_playing
     };
-    
+
     // Update tray menu to reflect new state
-    update_tray_menu(&app, &state).await.map_err(|e| e.to_string())?;
-    
+    update_tray_menu(&app, &state)
+        .await
+        .map_err(|e| e.to_string())?;
+
     Ok(is_playing)
 }
 
 #[tauri::command]
-async fn set_window_visibility(state: State<'_, AppStateType>, visible: bool, app: AppHandle) -> Result<(), String> {
+async fn set_window_visibility(
+    state: State<'_, AppStateType>,
+    visible: bool,
+    app: AppHandle,
+) -> Result<(), String> {
     {
         let mut app_state = state.lock().map_err(|e| e.to_string())?;
         app_state.is_window_visible = visible;
     }
-    
+
     // Update tray menu to reflect new state
-    update_tray_menu(&app, &state).await.map_err(|e| e.to_string())?;
-    
+    update_tray_menu(&app, &state)
+        .await
+        .map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -79,38 +88,62 @@ async fn get_app_state(state: State<'_, AppStateType>) -> Result<AppState, Strin
     Ok(app_state.clone())
 }
 
-async fn update_tray_menu(app: &AppHandle, state: &AppStateType) -> Result<(), Box<dyn std::error::Error>> {
+async fn update_tray_menu(
+    app: &AppHandle,
+    state: &AppStateType,
+) -> Result<(), Box<dyn std::error::Error>> {
     let (is_audio_mode, is_playing, is_visible) = {
         let app_state = state.lock().unwrap();
-        (app_state.is_audio_mode, app_state.is_playing, app_state.is_window_visible)
+        (
+            app_state.is_audio_mode,
+            app_state.is_playing,
+            app_state.is_window_visible,
+        )
     };
-    
+
     // Build tray menu with current state
     build_tray_with_state(app, is_audio_mode, is_playing, is_visible)?;
     Ok(())
 }
 
-fn build_tray_with_state(app: &AppHandle, is_audio_mode: bool, is_playing: bool, is_visible: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn build_tray_with_state(
+    app: &AppHandle,
+    is_audio_mode: bool,
+    is_playing: bool,
+    is_visible: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let show_hide = if is_visible {
-        MenuItemBuilder::new("Hide Window").id("toggle_window").build(app)?
+        MenuItemBuilder::new("Hide Window")
+            .id("toggle_window")
+            .build(app)?
     } else {
-        MenuItemBuilder::new("Show Window").id("toggle_window").build(app)?
+        MenuItemBuilder::new("Show Window")
+            .id("toggle_window")
+            .build(app)?
     };
-    
+
     let play_pause = if is_playing {
-        MenuItemBuilder::new("Pause").id("toggle_playback").build(app)?
+        MenuItemBuilder::new("Pause")
+            .id("toggle_playback")
+            .build(app)?
     } else {
-        MenuItemBuilder::new("Play").id("toggle_playback").build(app)?
+        MenuItemBuilder::new("Play")
+            .id("toggle_playback")
+            .build(app)?
     };
-    
+
     let mode_toggle = if is_audio_mode {
-        MenuItemBuilder::new("Switch to Video Mode").id("toggle_mode").build(app)?
+        MenuItemBuilder::new("Switch to Video Mode")
+            .id("toggle_mode")
+            .build(app)?
     } else {
-        MenuItemBuilder::new("Switch to Audio Mode").id("toggle_mode").build(app)?
+        MenuItemBuilder::new("Switch to Audio Mode")
+            .id("toggle_mode")
+            .build(app)?
     };
-    
+
     let quit = MenuItemBuilder::new("Quit").id("quit").build(app)?;
-    
+
     let menu = MenuBuilder::new(app)
         .item(&show_hide)
         .separator()
@@ -150,16 +183,16 @@ fn build_tray_with_state(app: &AppHandle, is_audio_mode: bool, is_playing: bool,
                         let _ = window.emit("toggle-mode-from-tray", ());
                     }
                 }
-            }
-            "hide" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.hide();
+                "hide" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.hide();
+                    }
                 }
+                "quit" => {
+                    app.exit(0);
+                }
+                _ => {}
             }
-            "quit" => {
-                app.exit(0);
-            }
-            _ => {}
         })
         .on_tray_icon_event(move |tray, event| {
             if let TrayIconEvent::Click {
