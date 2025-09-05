@@ -2,7 +2,6 @@
   "build": {
     "beforeDevCommand": "",
     "beforeBuildCommand": "",
-    "devUrl": "http://localhost:1420",
     "frontendDist": "../src"
   },
   "bundle": {
@@ -16,7 +15,7 @@
       "icons/icon.ico"
     ]
   },
-  "productName": "lofi-girl",
+  "productName": "Lofi Girl",
   "version": "2.0.0",
   "identifier": "tools.zach.lofigirl",
   "app": {
