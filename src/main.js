@@ -177,7 +177,7 @@ async function initializeApp() {
 
   // Set up event listeners
   document.getElementById("goToGitHub").addEventListener("click", () => {
-    open("https://github.com/owlnai/lofi-in-your-desktop")
+    open("https://github.com/zachthedev/lofigirl")
   });
   
   document.getElementById("titlebar-minimize").addEventListener("click", () => {
