@@ -1,11 +1,11 @@
 [package]
-name = "lofi-in-your-desktop"
-version = "2.0.0"
-description = "Listen to Lofi music on your desktop"
-authors = ["Unai Mengual <git@owln.ai>"]
+name = "lofi-girl"
+version = "2.1.0"
+description = "Listen to Lofi Girl radio on your desktop with minimalist design, audio-only mode, video player, and system tray integration"
+authors = ["ZachTheDev", "Unai Mengual <git@owln.ai>", "Original contributors"]
 license = "MIT"
-repository = "https://github.com/owlnai/lofi-in-your-desktop"
-edition = "2021"
+repository = "https://github.com/zachthedev/lofigirl"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

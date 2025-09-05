@@ -27,6 +27,14 @@
     </div>
     <div class="titlebar-buttons">
       <div class="titlebar-button"
+           id="audio-toggle"
+           title="Toggle audio-only mode">
+        <img src="https://api.iconify.design/ph:play-bold.svg"
+             alt="audio toggle"
+             class="titlebar-icon"
+             id="audio-toggle-icon" />
+      </div>
+      <div class="titlebar-button"
            id="titlebar-minimize">
         <img src="https://api.iconify.design/ph:arrows-in-simple-bold.svg"
              alt="minimize"
@@ -51,7 +59,34 @@
           frameborder="0"
           style="min-height:100vh;width:100%;user-select: none;"
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-          allowfullscreen></iframe>
+          allowfullscreen
+          id="video-player"></iframe>
+  
+  <!-- Audio-only mode elements -->
+  <div id="audio-mode" style="display: none;">
+    <audio id="audio-player" 
+           crossorigin="anonymous"
+           autoplay
+           loop>
+      <source src="https://www.youtube.com/watch?v=jfKfPfyJRdk" type="audio/mpeg">
+      Your browser does not support the audio element.
+    </audio>
+    
+    <div class="visualizer-container">
+      <canvas id="visualizer"></canvas>
+      <div class="audio-info">
+        <h2><img src="https://api.iconify.design/ph:music-note-bold.svg" alt="music" class="inline-icon" /> Lofi Hip Hop Radio</h2>
+        <p>24/7 chill beats to study/relax to</p>
+        <div class="audio-controls">
+          <button id="play-pause"><img src="https://api.iconify.design/ph:pause-bold.svg" alt="pause" class="button-icon" /></button>
+          <div class="volume-control">
+            <img src="https://api.iconify.design/ph:speaker-high-bold.svg" alt="volume" class="inline-icon" />
+            <input type="range" id="volume-slider" min="0" max="100" value="70">
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </body>
 
 </html>

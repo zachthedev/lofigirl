@@ -1660,8 +1660,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "lofi-in-your-desktop"
-version = "1.0.1"
+name = "lofi-girl"
+version = "2.1.0"
 dependencies = [
  "serde",
  "serde_json",
