@@ -3,7 +3,7 @@
   "version": "2.1.0",
   "description": "Lofi Girl desktop radio player",
   "scripts": {
-    "prepare": "husky install || true",
+    "prepare": "husky || true",
     "commitlint": "commitlint --edit"
   },
   "devDependencies": {

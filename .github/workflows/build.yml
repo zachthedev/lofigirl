@@ -55,7 +55,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@v2.7
         with:
           workspaces: './src-tauri -> target'
 
@@ -107,7 +107,7 @@ jobs:
             pkg-config
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@v2.7
         with:
           workspaces: './src-tauri -> target'
 
@@ -178,12 +178,12 @@ jobs:
 
       - name: Setup Xcode (macOS only)
         if: matrix.platform == 'macos-latest'
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@v1.6.0
         with:
           xcode-version: latest-stable
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@v2.7
         with:
           workspaces: './src-tauri -> target'
 
