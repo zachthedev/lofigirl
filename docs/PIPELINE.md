@@ -48,30 +48,32 @@ changes → lint → test → build → cross-platform-build
                         release (artifact reuse)
 ```
 
-## Branch Protection Rules
+## Branch Protection with GitHub Rulesets
 
-Set up in GitHub Settings → Branches:
+⚡ **Modern Setup Required**: This repository uses GitHub Rulesets (2025 best practice) instead of legacy Branch Protection Rules.
 
-### Main Branch
-- ✅ Require pull request reviews before merging
-- ✅ Require status checks to pass before merging:
-  - `changes`
-  - `lint`
-  - `test` 
-  - `build`
-  - `build-cross-platform` (all matrix jobs)
-  - `validate-commits`
-- ✅ Require branches to be up to date before merging
-- ✅ Restrict pushes that create files larger than 100MB
+📋 **Complete Setup Guide**: See [GITHUB-RULESETS-SETUP.md](./GITHUB-RULESETS-SETUP.md) for detailed step-by-step instructions.
 
-### Develop Branch  
-- ✅ Require status checks to pass before merging:
-  - `changes`
-  - `lint`
-  - `test`
-  - `build` 
-  - `validate-commits`
-- ✅ Require branches to be up to date before merging
+### Quick Summary
+
+**Main Branch Ruleset**:
+- ✅ Requires PR with 1 approval
+- ✅ Requires all status checks: `changes`, `lint`, `test`, `build`, `build-cross-platform` (all platforms), `validate-commits`
+- ✅ Requires signed commits & linear history
+- ✅ Blocks direct pushes and files >100MB
+
+**Develop Branch Ruleset**:
+- ✅ Requires PR with 1 approval  
+- ✅ Requires core status checks: `changes`, `lint`, `test`, `build`, `validate-commits`
+- ✅ Requires linear history
+
+**Feature Branch Ruleset**:
+- ✅ Requires status checks for PRs to develop
+- ✅ Standard validation requirements
+
+**Release Protection Ruleset**:
+- ✅ Protects `v*` tags from manual modification
+- ✅ Only allows tag creation through release workflows
 
 ## Composite Actions
 
